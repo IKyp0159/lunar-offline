@@ -75,7 +75,7 @@ Windows).
 ### Opción B — desde código
 
 ```powershell
-git clone https://github.com/<usuario>/lunar-offline.git
+git clone https://github.com/IKyp0159/lunar-offline.git
 cd lunar-offline
 .\Lunar Offline.bat
 ```
