@@ -1,0 +1,58 @@
+LUNAR OFFLINE LAUNCHER — portable
+=================================
+
+Un solo .exe. No necesita Python ni instalar nada.
+
+REQUISITO
+---------
+Tener Lunar Client instalado y con la version ya descargada
+(abre el launcher oficial una vez y deja que baje 1.8.9 o 1.7.10).
+
+USO
+---
+1. Abre "Lunar Offline.exe".
+2. Nick: 1-16 caracteres, A-Z 0-9 _.
+3. Version: la misma del servidor.
+4. Servidor: minecraft.midominio.net o minecraft.midominio.net:25565
+   (vacio = menu principal).
+5. JUGAR CON LUNAR.
+
+Shift derecho dentro del juego abre el mod menu de Lunar.
+
+QUE HACE
+--------
+- Usa los jars, natives y JRE que Lunar ya tiene instalados.
+- Arranca el core Genesis con una sesion offline (UUID offline estandar).
+- Cambia la cuenta activa de Lunar por una offline mientras juegas y
+  restaura tu accounts.json original al cerrar el juego.
+
+SERVIDOR
+--------
+Tiene que estar en online-mode=false. En un servidor premium el login
+se rechaza con "Invalid session": no hay token de Mojang que validar.
+
+NO ABRAS el launcher oficial de Lunar mientras el juego offline corre.
+El launcher reescribe accounts.json y la restauracion automatica ya no
+puede dejar el archivo como estaba. Cierra el juego primero.
+
+SI ALGO FALLA
+-------------
+- Boton "Diagnostico": dice si falta JRE, natives o algun jar.
+- Boton "Ver log": log del ultimo arranque.
+- Boton "Restaurar cuenta": devuelve accounts.json a su estado original.
+- Reporte de soporte sin abrir la ventana:
+      "Lunar Offline.exe" --selftest
+  escribe el informe en %APPDATA%\LunarOffline\selftest.txt
+
+DATOS QUE GUARDA
+----------------
+%APPDATA%\LunarOffline\
+  config.json              ajustes (nick, version, RAM, resolucion)
+  accounts.original.json   copia temporal mientras juegas
+  logs\                    log y comando exacto de cada arranque
+  selftest.txt             informe de diagnostico
+
+NO FUNCIONA CON
+---------------
+Cosmeticos y skin premium (van atados a la cuenta de Microsoft).
+Servidores premium.
