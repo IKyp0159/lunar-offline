@@ -112,8 +112,14 @@ Dentro del juego, **Shift derecho** abre el mod menu de Lunar.
 ### La regla de oro
 
 **No abras el launcher oficial mientras el juego offline esté corriendo.**
-El launcher reescribe `accounts.json` y la restauración automática ya no puede
-dejar el archivo como estaba. Cierra el juego primero.
+El launcher reescribe `accounts.json` y, si encuentra solo la cuenta offline sin
+token válido, **cierra tu sesión de Lunar**. Desde la 1.1.0 la app:
+
+- **bloquea el arranque** si detecta `Lunar Client.exe` abierto;
+- avisa en la barra de estado si lo abres mientras juegas;
+- aun así, si pasa, **no pierdes nada**: el swap es aditivo (añade la cuenta
+  offline sin borrar las premium) y la restauración fusiona los dos archivos en
+  vez de sobrescribir, así que un login nuevo hecho mientras jugabas sobrevive.
 
 ---
 
@@ -164,9 +170,20 @@ Detalle completo del proceso de ingeniería inversa en
 Lunar **ignora** `--username` para la sesión y lee `accounts.json`. Por eso la app:
 
 1. guarda copia en `%APPDATA%\LunarOffline\accounts.original.json`;
-2. escribe una cuenta `legacy` con tu nick y su UUID offline;
+2. **añade** una cuenta `legacy` con tu nick y su UUID offline, sin borrar las
+   que ya tienes, y la marca como activa;
 3. lanza el juego;
-4. al morir el proceso, restaura el archivo original byte por byte.
+4. al morir el proceso, **fusiona** el archivo actual con la copia original y
+   restaura la cuenta activa.
+
+La fusión existe por un motivo concreto: si mientras juegas el launcher oficial
+inicia sesión (o el archivo cambia por lo que sea), la restauración no puede
+volver a copiar el original encima o ese login nuevo se pierde. En su lugar:
+
+- toda cuenta que esté en la copia original vuelve;
+- toda cuenta nueva que aparezca en el archivo actual se conserva;
+- si la misma cuenta está en ambos, gana el token con vencimiento más nuevo;
+- la entrada offline temporal se elimina y la cuenta activa vuelve a ser la tuya.
 
 Si la app muere de golpe, al abrirla de nuevo restaura sola. También hay botón
 **Restaurar cuenta**.
@@ -251,6 +268,27 @@ Nada de esto se sube a ningún sitio.
   son de Windows.
 
 ---
+
+## Cambios
+
+### 1.1.0
+
+- El swap de cuentas es **aditivo**: añade la cuenta offline sin borrar las
+  premium. Antes reemplazaba el archivo entero, y si el launcher oficial se
+  abría con el swap vivo encontraba una sola cuenta sin token y **cerraba
+  sesión**.
+- La restauración **fusiona** en vez de sobrescribir: los logins hechos mientras
+  jugabas se conservan.
+- `swap.pending` guarda ahora `{nick, offline_id, since}`; el `localId` offline
+  es estable por nick, así que dos arranques seguidos no duplican entradas.
+- La app **bloquea el arranque** si `Lunar Client.exe` (el launcher oficial)
+  está abierto, y avisa en la barra de estado si lo abres mientras juegas.
+- `accounts.json` corrupto ya no rompe el swap ni la restauración.
+- `--selftest` informa si el launcher oficial está abierto y cuántas cuentas hay.
+
+### 1.0.0
+
+- Primera versión.
 
 ## Licencia
 

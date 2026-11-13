@@ -162,48 +162,145 @@ def available_versions() -> list[str]:
 # accounts.json swap — Lunar toma el nick de ahi
 # --------------------------------------------------------------------------- #
 
+def offline_local_id(nick: str) -> str:
+    """localId estable por nick: dos arranques con el mismo nick no duplican entrada."""
+    return hashlib.sha1(("LunarOffline:" + nick.lower()).encode("utf-8")).hexdigest()[:32]
+
+
+def read_accounts(path: Path) -> dict:
+    """Lee accounts.json tolerando basura. Devuelve estructura vacia si no se puede."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"activeAccountLocalId": "", "accounts": {}}
+    if not isinstance(data, dict):
+        return {"activeAccountLocalId": "", "accounts": {}}
+    if not isinstance(data.get("accounts"), dict):
+        data["accounts"] = {}
+    return data
+
+
+def _is_real_session(acc: dict) -> bool:
+    """Cuenta con token de Microsoft de verdad (no la offline que inyecta la app)."""
+    token = str(acc.get("accessToken") or "")
+    return bool(token) and token != "0" and not acc.get("legacy")
+
+
+def merge_accounts(base: dict, incoming: dict, drop_id: str = "") -> dict:
+    """
+    Une dos accounts.json sin perder nada.
+
+    - Toda cuenta de `incoming` que no este en `base` se conserva: es un login
+      nuevo hecho mientras el swap estaba vivo (launcher oficial, otra cuenta).
+    - Si la cuenta esta en ambos, gana la que tenga sesion real mas nueva, para
+      no pisar un token recien emitido con uno viejo.
+    - `drop_id` se elimina del resultado: es la cuenta offline temporal.
+    """
+    result = {k: v for k, v in (base.get("accounts") or {}).items() if k != drop_id}
+    for local_id, acc in (incoming.get("accounts") or {}).items():
+        if local_id == drop_id or not isinstance(acc, dict):
+            continue
+        prev = result.get(local_id)
+        if prev is None:
+            result[local_id] = acc
+            continue
+        if _is_real_session(acc) and not _is_real_session(prev):
+            result[local_id] = acc
+            continue
+        if _is_real_session(acc) and _is_real_session(prev):
+            if str(acc.get("accessTokenExpiresAt", "")) > str(prev.get("accessTokenExpiresAt", "")):
+                result[local_id] = acc
+    active = base.get("activeAccountLocalId") or incoming.get("activeAccountLocalId") or ""
+    if active not in result:
+        real = [k for k, v in result.items() if _is_real_session(v)]
+        active = real[0] if real else (next(iter(result), ""))
+    return {"activeAccountLocalId": active, "accounts": result}
+
+
+def official_launcher_running() -> bool:
+    """True si el launcher oficial de Lunar esta abierto (se come accounts.json)."""
+    if os.name != "nt":
+        return False
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq Lunar Client.exe", "/NH"],
+            capture_output=True, text=True, timeout=8,
+            creationflags=subprocess.CREATE_NO_WINDOW,  # type: ignore[attr-defined]
+        ).stdout
+    except Exception:
+        return False
+    return "Lunar Client.exe" in out
+
+
 def accounts_restore() -> bool:
-    if ORIGINAL_ACCOUNTS.is_file():
-        target = ACCOUNTS
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ORIGINAL_ACCOUNTS, target)
-        ORIGINAL_ACCOUNTS.unlink(missing_ok=True)
+    """Devuelve la cuenta premium y conserva cualquier login hecho mientras jugabas."""
+    offline_id = ""
+    try:
+        offline_id = json.loads(SWAP_MARKER.read_text(encoding="utf-8")).get("offline_id", "")
+    except Exception:
+        pass
+
+    if not ORIGINAL_ACCOUNTS.is_file():
         SWAP_MARKER.unlink(missing_ok=True)
-        return True
-    return False
+        return False
+
+    original = read_accounts(ORIGINAL_ACCOUNTS)
+    current = read_accounts(ACCOUNTS)
+
+    merged = merge_accounts(original, current, drop_id=offline_id)
+    ACCOUNTS.parent.mkdir(parents=True, exist_ok=True)
+    ACCOUNTS.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+
+    ORIGINAL_ACCOUNTS.unlink(missing_ok=True)
+    SWAP_MARKER.unlink(missing_ok=True)
+    return True
 
 
 def accounts_swap(nick: str) -> None:
+    """
+    Anade la cuenta offline y la marca como activa, SIN borrar las que ya hay.
+
+    Antes se reemplazaba el archivo entero: si el launcher oficial se abria con
+    el swap vivo, encontraba una sola cuenta sin token valido y cerraba sesion.
+    Ahora las cuentas premium se quedan ahi y el swap solo cambia la activa.
+    """
     ACCOUNTS.parent.mkdir(parents=True, exist_ok=True)
+    current = read_accounts(ACCOUNTS)
 
-    # Si quedo un swap sin restaurar de una sesion anterior, no sobrescribimos
-    # el original bueno con la cuenta offline.
-    if not SWAP_MARKER.exists() and ACCOUNTS.is_file():
-        shutil.copy2(ACCOUNTS, ORIGINAL_ACCOUNTS)
-    SWAP_MARKER.write_text(str(int(time.time())), encoding="utf-8")
+    # Copia del original solo la primera vez: si ya hay marca, la copia buena
+    # ya existe y reescribirla con la cuenta offline perderia las premium.
+    if not SWAP_MARKER.exists():
+        if ACCOUNTS.is_file():
+            shutil.copy2(ACCOUNTS, ORIGINAL_ACCOUNTS)
+        (APP_DIR / "accounts.original.active").write_text(
+            str(current.get("activeAccountLocalId", "")), encoding="utf-8")
 
-    local_id = uuid.uuid4().hex
+    local_id = offline_local_id(nick)
     profile_id = offline_uuid(nick)
-    payload = {
-        "activeAccountLocalId": local_id,
-        "accounts": {
-            local_id: {
-                "accessToken": "0",
-                "accessTokenExpiresAt": "1970-01-01T00:00:00Z",
-                "eligibleForMigration": False,
-                "hasMultipleProfiles": False,
-                "legacy": True,
-                "persistent": False,
-                "localId": local_id,
-                "refreshToken": "",
-                "minecraftProfile": {"id": profile_id, "name": nick},
-                "remoteId": "",
-                "type": "Xbox",
-                "username": nick,
-            }
-        },
+    merged = dict(current.get("accounts") or {})
+    merged[local_id] = {
+        "accessToken": "0",
+        "accessTokenExpiresAt": "1970-01-01T00:00:00Z",
+        "eligibleForMigration": False,
+        "hasMultipleProfiles": False,
+        "legacy": True,
+        "persistent": False,
+        "localId": local_id,
+        "refreshToken": "",
+        "minecraftProfile": {"id": profile_id, "name": nick},
+        "remoteId": "",
+        "type": "Xbox",
+        "username": nick,
     }
-    ACCOUNTS.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    SWAP_MARKER.write_text(
+        json.dumps({"nick": nick, "offline_id": local_id, "since": int(time.time())}),
+        encoding="utf-8",
+    )
+    ACCOUNTS.write_text(
+        json.dumps({"activeAccountLocalId": local_id, "accounts": merged}, indent=2),
+        encoding="utf-8",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -299,6 +396,7 @@ class Launcher(tk.Tk):
         self.proc: subprocess.Popen | None = None
         self.log_path: Path | None = None
         self.pending_restore = False
+        self.launcher_warned = False
 
         # recuperacion de un cierre sucio
         if SWAP_MARKER.exists() or ORIGINAL_ACCOUNTS.is_file():
@@ -475,7 +573,8 @@ class Launcher(tk.Tk):
 
     def _restore(self) -> None:
         if accounts_restore():
-            messagebox.showinfo("Cuenta", "accounts.json restaurado al original.")
+            messagebox.showinfo("Cuenta", "Cuenta premium restaurada.\n"
+                                          "Los logins hechos mientras jugabas se conservaron.")
         else:
             messagebox.showinfo("Cuenta", "No hay nada que restaurar.")
 
@@ -507,6 +606,18 @@ class Launcher(tk.Tk):
     def launch(self) -> None:
         if self.proc and self.proc.poll() is None:
             messagebox.showinfo("Ya corriendo", "Lunar ya esta abierto.")
+            return
+
+        # El launcher oficial reescribe accounts.json: si esta abierto mientras
+        # el swap vive, la app no puede restaurar limpio y Lunar puede cerrar
+        # sesion. Se bloquea el arranque hasta que se cierre.
+        if official_launcher_running():
+            messagebox.showerror(
+                "Lunar Client oficial abierto",
+                "Cierra 'Lunar Client' antes de jugar en modo offline.\n\n"
+                "Mientras el launcher oficial esta abierto reescribe accounts.json "
+                "y tu cuenta premium puede cerrar sesion.\n\n"
+                "Cierra el launcher y vuelve a intentar.")
             return
 
         nick = self.nick_var.get().strip()
@@ -556,6 +667,7 @@ class Launcher(tk.Tk):
             return
 
         self.pending_restore = True
+        self.launcher_warned = False
 
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0  # type: ignore[attr-defined]
         try:
@@ -578,7 +690,11 @@ class Launcher(tk.Tk):
             return
         rc = self.proc.poll()
         if rc is None:
-            self._set_status(f"Corriendo (PID {self.proc.pid})")
+            if official_launcher_running() and not self.launcher_warned:
+                self.launcher_warned = True
+                self._set_status("OJO: launcher oficial abierto — cierra Lunar Client ya")
+            elif not official_launcher_running():
+                self._set_status(f"Corriendo (PID {self.proc.pid})")
             self.after(3000, self._watch)
         else:
             if self.pending_restore:
@@ -613,7 +729,9 @@ def selftest() -> int:
         f"natives: {natives}",
         f"minecraft: {MC_DIR} exists={MC_DIR.is_dir()}",
         f"accounts: {ACCOUNTS} exists={ACCOUNTS.is_file()}",
+        f"launcher_oficial_abierto: {official_launcher_running()}",
         f"swap_pending: {SWAP_MARKER.exists()}",
+        f"cuentas_registradas: {len(read_accounts(ACCOUNTS).get('accounts', {}))}",
         f"versions: {available_versions()}",
     ]
     rc = 0

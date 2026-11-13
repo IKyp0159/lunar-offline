@@ -383,7 +383,58 @@ Cada pieza se probó con un arranque real y lectura del log, no por inspección:
 
 ---
 
-## 11. Limitaciones que no tienen arreglo
+## 11. Por qué el swap es aditivo y no sustitutivo
+
+La primera versión escribía `accounts.json` **entero**, con la cuenta offline
+como única entrada. La copia del original quedaba en
+`accounts.original.json` y se restauraba al cerrar. En el papel era limpio.
+
+El fallo aparece cuando el launcher oficial se abre **mientras el swap está
+vivo**:
+
+1. La app ya escribió un `accounts.json` con una sola cuenta, `legacy: true`,
+   `accessToken: "0"`.
+2. El launcher oficial lee ese archivo, no encuentra ninguna sesión de Microsoft
+   válida y **cierra la sesión**.
+3. Le pide al usuario iniciar sesión de nuevo. El archivo nuevo que escribe
+   contiene la cuenta offline que había más la recién logueada.
+4. La restauración de la app, que copiaba el original encima, habría borrado ese
+   login nuevo.
+
+Ese es exactamente el síntoma *"se cerró sesión de mi cuenta de Lunar porque
+pasó"*.
+
+### Diseño nuevo
+
+**Swap aditivo** (`accounts_swap`):
+
+- lee el archivo actual y **conserva todas** las cuentas;
+- añade o reemplaza solo la entrada offline;
+- `localId` = `sha1("LunarOffline:" + nick.lower())[:32]`, estable: dos arranques
+  con el mismo nick no duplican nada;
+- guarda copia completa del original la primera vez, y el `localId` de la cuenta
+  offline dentro de `swap.pending` como JSON.
+
+**Restauración fusionada** (`accounts_restore` + `merge_accounts`):
+
+| situación | resultado |
+|---|---|
+| cuenta en el original, no en el actual | vuelve (el launcher oficial la borró) |
+| cuenta en el actual, no en el original | se conserva (login nuevo) |
+| cuenta en ambos | gana el token con `accessTokenExpiresAt` más nuevo |
+| entrada offline temporal | se elimina |
+| `activeAccountLocalId` | vuelve al original; si ya no existe, a una cuenta real |
+
+Y un guardia: `official_launcher_running()` consulta `tasklist` por
+`Lunar Client.exe` y **bloquea el arranque** si el launcher oficial está abierto.
+Durante el juego, la barra de estado avisa si aparece.
+
+Un `accounts.json` corrupto ya no revienta nada: `read_accounts()` devuelve una
+estructura vacía y el swap trabaja sobre ella.
+
+---
+
+## 12. Limitaciones que no tienen arreglo
 
 - **Servidores premium.** El login pasa por `session.minecraft.net`. Sin token
   de Mojang, el servidor responde `Invalid session`. No hay nada que un launcher

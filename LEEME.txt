@@ -1,5 +1,5 @@
-LUNAR OFFLINE LAUNCHER — portable
-=================================
+LUNAR OFFLINE LAUNCHER — portable  v1.1.0
+===========================================
 
 Un solo .exe. No necesita Python ni instalar nada.
 
@@ -10,12 +10,13 @@ Tener Lunar Client instalado y con la version ya descargada
 
 USO
 ---
-1. Abre "Lunar Offline.exe".
-2. Nick: 1-16 caracteres, A-Z 0-9 _.
-3. Version: la misma del servidor.
-4. Servidor: minecraft.midominio.net o minecraft.midominio.net:25565
+1. Cierra Lunar Client (el launcher oficial) antes de jugar.
+2. Abre "Lunar Offline.exe".
+3. Nick: 1-16 caracteres, A-Z 0-9 _.
+4. Version: la misma del servidor.
+5. Servidor: minecraft.midominio.net o minecraft.midominio.net:25565
    (vacio = menu principal).
-5. JUGAR CON LUNAR.
+6. JUGAR CON LUNAR.
 
 Shift derecho dentro del juego abre el mod menu de Lunar.
 
@@ -23,23 +24,28 @@ QUE HACE
 --------
 - Usa los jars, natives y JRE que Lunar ya tiene instalados.
 - Arranca el core Genesis con una sesion offline (UUID offline estandar).
-- Cambia la cuenta activa de Lunar por una offline mientras juegas y
-  restaura tu accounts.json original al cerrar el juego.
+- Anade una cuenta offline a Lunar SIN borrar las tuyas, la marca como
+  activa mientras juegas, y al cerrar el juego devuelve la tuya.
+- Si mientras juegas inicias sesion en otra cuenta, no se pierde: al
+  restaurar se fusionan las dos listas.
 
 SERVIDOR
 --------
 Tiene que estar en online-mode=false. En un servidor premium el login
 se rechaza con "Invalid session": no hay token de Mojang que validar.
 
-NO ABRAS el launcher oficial de Lunar mientras el juego offline corre.
-El launcher reescribe accounts.json y la restauracion automatica ya no
-puede dejar el archivo como estaba. Cierra el juego primero.
+IMPORTANTE — EL LAUNCHER OFICIAL
+--------------------------------
+No abras Lunar Client mientras el juego offline corre. La app bloquea el
+arranque si lo detecta abierto, y avisa en la barra de estado si aparece
+mientras juegas. Si aun asi se abre y Lunar te pide iniciar sesion otra
+vez, tu cuenta no se pierde: vuelve a entrar y listo.
 
 SI ALGO FALLA
 -------------
 - Boton "Diagnostico": dice si falta JRE, natives o algun jar.
 - Boton "Ver log": log del ultimo arranque.
-- Boton "Restaurar cuenta": devuelve accounts.json a su estado original.
+- Boton "Restaurar cuenta": devuelve la cuenta activa a la tuya.
 - Reporte de soporte sin abrir la ventana:
       "Lunar Offline.exe" --selftest
   escribe el informe en %APPDATA%\LunarOffline\selftest.txt
@@ -49,6 +55,7 @@ DATOS QUE GUARDA
 %APPDATA%\LunarOffline\
   config.json              ajustes (nick, version, RAM, resolucion)
   accounts.original.json   copia temporal mientras juegas
+  swap.pending             marca de sesion offline viva
   logs\                    log y comando exacto de cada arranque
   selftest.txt             informe de diagnostico
 
@@ -56,3 +63,10 @@ NO FUNCIONA CON
 ---------------
 Cosmeticos y skin premium (van atados a la cuenta de Microsoft).
 Servidores premium.
+
+CAMBIOS 1.1.0
+-------------
+- El cambio de cuenta ya no borra las tuyas (antes podia cerrarte la
+  sesion de Lunar si el launcher oficial se abria mientras jugabas).
+- La restauracion fusiona en vez de sobrescribir.
+- Bloqueo al arrancar si el launcher oficial esta abierto.
