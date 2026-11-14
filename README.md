@@ -68,9 +68,9 @@ Windows).
 
 ### Opción A — portable (recomendado)
 
-1. Descarga `lunar-offline-portable.zip` de la sección **Releases**.
-2. Descomprime donde quieras.
-3. Doble clic en `Lunar Offline.exe`.
+1. Descarga **`Lunar Offline.exe`** de la sección **Releases** (el release trae
+   solo el ejecutable, sin zip).
+2. Ponlo donde quieras y dale doble clic.
 
 ### Opción B — desde código
 
@@ -100,12 +100,13 @@ El resultado queda en `dist\Lunar Offline.exe`.
 ## Uso
 
 1. **Nick** — 1 a 16 caracteres: `A-Z`, `0-9`, `_`.
-2. **Versión** — la misma que use el servidor.
-3. **Servidor** — `minecraft.midominio.net` o `minecraft.midominio.net:25565`.
+2. **Versión** — la misma que use el servidor (`1.8.9` o `1.7.10`).
+3. **Memoria** — el slider; 3072 MB está bien para 1.8.9.
+4. **Servidor** — `minecraft.midominio.net` o `minecraft.midominio.net:25565`.
    Vacío = menú principal, te conectas a mano.
-4. **RAM** — 3072 MB está bien para 1.8.9.
-5. **Resolución** / pantalla completa.
-6. **JUGAR CON LUNAR**.
+5. **Avanzado** — despliega resolución, pantalla completa y la ruta de Java
+   (solo si la detección automática no encuentra tu JRE).
+6. **Jugar con Lunar** — o pulsa `Enter`.
 
 Dentro del juego, **Shift derecho** abre el mod menu de Lunar.
 
@@ -270,6 +271,19 @@ Nada de esto se sube a ningún sitio.
 ---
 
 ## Cambios
+
+### 1.2.0
+
+- **Interfaz nueva, minimalista.** Ya no usa los widgets grises del sistema:
+  todo está dibujado a mano sobre canvas, con tipografía Segoe UI, esquinas
+  redondeadas, un solo color de acento y barra de título oscura.
+- Campos con borde de foco, selector de versión tipo *pill*, slider de memoria,
+  interruptor de pantalla completa y un panel **Avanzado** plegable.
+- Los avisos ya no son los diálogos blancos de Windows: son modales oscuros,
+  centrados sobre la ventana.
+- **Los releases ahora traen solo el `.exe`**, sin zip ni archivos extra.
+- El estado del juego (`Corriendo · PID`, `Cuenta restaurada`) se muestra en
+  color en el pie, y el botón cambia a *Lunar abierto* mientras corre.
 
 ### 1.1.1
 

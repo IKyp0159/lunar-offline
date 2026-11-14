@@ -397,25 +397,363 @@ def build_command(nick: str, version: str, ram_mb: int, server: str,
 # gui
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# minimal ui toolkit (canvas-drawn, sin ttk, sin bordes grises del sistema)
+# --------------------------------------------------------------------------- #
+
+BG        = "#0B0C10"
+CARD      = "#13151C"
+CARD_HI   = "#191C25"
+BORDER    = "#222633"
+BORDER_HI = "#3C4459"
+TEXT      = "#EEEFF4"
+MUTED     = "#6B7080"
+ACCENT    = "#4C7DFF"
+ACCENT_HI = "#6D95FF"
+AMBER     = "#E5AE5A"
+GREEN     = "#4ED08A"
+
+APP_VERSION = "1.2.0"
+
+F_TITLE = ("Segoe UI Semibold", -22)
+F_SUB   = ("Segoe UI", -11)
+F_CAPS  = ("Segoe UI Semibold", -9)
+F_INPUT = ("Segoe UI", -13)
+F_BTN   = ("Segoe UI Semibold", -14)
+F_SMALL = ("Segoe UI", -10)
+
+
+def round_rect(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
+               r: float, **kw) -> int:
+    """Rectangulo redondeado sobre un Canvas (poligono suavizado)."""
+    r = max(0.0, min(r, (x2 - x1) / 2, (y2 - y1) / 2))
+    pts = [
+        x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
+        x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+        x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
+    ]
+    return cv.create_polygon(pts, smooth=True, splinesteps=48, **kw)
+
+
+class RoundEntry(tk.Canvas):
+    """Campo de texto plano con esquinas redondeadas y borde de foco."""
+
+    def __init__(self, master, textvariable: tk.Variable, height: int = 44,
+                 font=F_INPUT, pad: int = 15, radius: int = 10) -> None:
+        super().__init__(master, height=height, bg=BG, highlightthickness=0, bd=0)
+        self._radius = radius
+        self._focused = False
+        self.entry = tk.Entry(
+            self, textvariable=textvariable, bd=0, relief="flat",
+            bg=CARD, fg=TEXT, insertbackground=ACCENT, font=font,
+            highlightthickness=0, selectbackground=ACCENT, selectforeground="#ffffff",
+        )
+        self._win = self.create_window(pad, height // 2, anchor="w", window=self.entry)
+        self.bind("<Configure>", lambda _e: self._draw())
+        self.entry.bind("<FocusIn>", lambda _e: self._focus(True))
+        self.entry.bind("<FocusOut>", lambda _e: self._focus(False))
+        self.entry.bind("<Button-1>", lambda _e: self.entry.focus_set())
+
+    def _focus(self, on: bool) -> None:
+        self._focused = on
+        self._draw()
+
+    def _draw(self) -> None:
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 8 or h < 8:
+            return
+        self.delete("shape")
+        round_rect(self, 0.5, 0.5, w - 1, h - 1, self._radius,
+                   fill=CARD, outline=BORDER_HI if self._focused else BORDER,
+                   width=1.4 if self._focused else 1, tags="shape")
+        self.tag_lower("shape")
+        self.itemconfigure(self._win, width=max(30, w - 2 * 15), height=h - 14)
+
+    def focus(self) -> None:  # type: ignore[override]
+        self.entry.focus_set()
+
+
+class RoundButton(tk.Canvas):
+    """Boton primario redondeado con estado hover y texto centrado."""
+
+    def __init__(self, master, text: str, command, height: int = 52,
+                 fill: str = ACCENT, hover: str = ACCENT_HI,
+                 fg: str = "#FFFFFF", font=F_BTN, radius: int = 12,
+                 width: int = 0) -> None:
+        super().__init__(master, height=height, width=width or 120,
+                         bg=BG, highlightthickness=0, bd=0, cursor="hand2")
+        self._text, self._cmd = text, command
+        self._fill, self._hover, self._fg = fill, hover, fg
+        self._font, self._radius = font, radius
+        self._over = False
+        self._down = False
+        self.bind("<Configure>", lambda _e: self._draw())
+        self.bind("<Enter>", lambda _e: self._set(True))
+        self.bind("<Leave>", lambda _e: self._set(False))
+        self.bind("<ButtonPress-1>", lambda _e: self._press(True))
+        self.bind("<ButtonRelease-1>", lambda _e: self._press(False))
+
+    def _set(self, over: bool) -> None:
+        self._over = over
+        self._draw()
+
+    def _press(self, down: bool) -> None:
+        self._down = down
+        self._draw()
+        if not down and self._over:
+            self._cmd()
+
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self._draw()
+
+    def _draw(self) -> None:
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 8 or h < 8:
+            return
+        self.delete("all")
+        fill = self._fill
+        if self._down:
+            fill = self._hover
+        elif self._over:
+            fill = self._hover
+        round_rect(self, 0.5, 0.5, w - 1, h - 1, self._radius, fill=fill, outline=fill)
+        self.create_text(w / 2, h / 2, text=self._text, fill=self._fg,
+                         font=self._font)
+
+
+class Segmented(tk.Canvas):
+    """Selector de opciones tipo pill group."""
+
+    def __init__(self, master, values: list[str], variable: tk.StringVar,
+                 height: int = 34, on_change=None) -> None:
+        super().__init__(master, height=height, bg=BG, highlightthickness=0,
+                         bd=0, cursor="hand2")
+        self.values = list(values) or ["1.8.9"]
+        self.var = variable
+        self._on_change = on_change
+        self.bind("<Configure>", lambda _e: self._draw())
+        self.bind("<Button-1>", self._click)
+
+    def _click(self, ev) -> None:
+        n = len(self.values)
+        w = self.winfo_width()
+        idx = min(n - 1, max(0, int(ev.x / (w / n))))
+        self.var.set(self.values[idx])
+        self._draw()
+        if self._on_change:
+            self._on_change()
+
+    def _draw(self) -> None:
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 8 or h < 8:
+            return
+        self.delete("all")
+        round_rect(self, 0.5, 0.5, w - 1, h - 1, 9, fill=CARD, outline=BORDER)
+        n = len(self.values)
+        seg = w / n
+        for i, val in enumerate(self.values):
+            x1 = i * seg
+            active = val == self.var.get()
+            if active:
+                round_rect(self, x1 + 3, 3, x1 + seg - 3, h - 3, 7,
+                           fill=ACCENT, outline=ACCENT)
+            self.create_text(x1 + seg / 2, h / 2, text=val,
+                             font=("Segoe UI Semibold", -11),
+                             fill="#FFFFFF" if active else MUTED)
+
+
+class Slider(tk.Canvas):
+    """Slider horizontal minimalista con pasos fijos."""
+
+    def __init__(self, master, variable: tk.IntVar, lo: int, hi: int,
+                 step: int = 256, on_change=None) -> None:
+        super().__init__(master, height=34, bg=BG, highlightthickness=0,
+                         bd=0, cursor="hand2")
+        self.var, self.lo, self.hi, self.step = variable, lo, hi, step
+        self._on_change = on_change
+        self.bind("<Configure>", lambda _e: self._draw())
+        self.bind("<Button-1>", self._set_from_x)
+        self.bind("<B1-Motion>", self._set_from_x)
+
+    def _set_from_x(self, ev) -> None:
+        w = self.winfo_width()
+        frac = min(1.0, max(0.0, (ev.x - 10) / max(1, w - 20)))
+        raw = self.lo + frac * (self.hi - self.lo)
+        val = int(round(raw / self.step) * self.step)
+        val = max(self.lo, min(self.hi, val))
+        if val != self.var.get():
+            self.var.set(val)
+            self._draw()
+            if self._on_change:
+                self._on_change()
+
+    def _draw(self) -> None:
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 8 or h < 8:
+            return
+        self.delete("all")
+        x0, x1, cy = 10, w - 10, h / 2
+        frac = (self.var.get() - self.lo) / max(1, (self.hi - self.lo))
+        frac = min(1.0, max(0.0, frac))
+        round_rect(self, x0, cy - 2, x1, cy + 2, 2, fill=BORDER, outline=BORDER)
+        if frac > 0.002:
+            round_rect(self, x0, cy - 2, x0 + (x1 - x0) * frac, cy + 2, 2,
+                       fill=ACCENT, outline=ACCENT)
+        kx = x0 + (x1 - x0) * frac
+        self.create_oval(kx - 8, cy - 8, kx + 8, cy + 8, fill="#FFFFFF",
+                         outline=ACCENT, width=2)
+
+
+class Toggle(tk.Canvas):
+    """Interruptor on/off."""
+
+    def __init__(self, master, variable: tk.BooleanVar, on_change=None) -> None:
+        super().__init__(master, width=42, height=24, bg=BG,
+                         highlightthickness=0, bd=0, cursor="hand2")
+        self.var = variable
+        self._on_change = on_change
+        self.bind("<Button-1>", self._click)
+        self._draw()
+
+    def _click(self, _ev=None) -> None:
+        self.var.set(not self.var.get())
+        self._draw()
+        if self._on_change:
+            self._on_change()
+
+    def _draw(self) -> None:
+        w, h = 42, 24
+        self.delete("all")
+        on = bool(self.var.get())
+        round_rect(self, 1, 1, w - 1, h - 1, (h - 2) / 2,
+                   fill=ACCENT if on else CARD,
+                   outline=ACCENT if on else BORDER)
+        cx = w - 12 if on else 12
+        self.create_oval(cx - 8, 4, cx + 8, h - 4,
+                         fill="#FFFFFF" if on else MUTED, outline="")
+
+
+class Link(tk.Label):
+    """Texto clicable discreto."""
+
+    def __init__(self, master, text: str, command, color: str = MUTED) -> None:
+        super().__init__(master, text=text, fg=color, bg=BG, font=F_SMALL,
+                         cursor="hand2")
+        self._base = color
+        self.bind("<Button-1>", lambda _e: command())
+        self.bind("<Enter>", lambda _e: self.configure(fg=TEXT))
+        self.bind("<Leave>", lambda _e: self.configure(fg=self._base))
+
+
+def caps(master, text: str) -> tk.Label:
+    """Etiqueta de campo en mayusculas pequenas con tracking manual."""
+    return tk.Label(master, text=text.upper(), fg=MUTED, bg=BG,
+                    font=F_CAPS, anchor="w")
+
+
+class Dialog(tk.Toplevel):
+    """Aviso modal oscuro, coherente con el resto de la interfaz."""
+
+    def __init__(self, master, title: str, message: str,
+                 kind: str = "info", ask: bool = False) -> None:
+        super().__init__(master)
+        self.result = False
+        self.withdraw()
+        self.title(title)
+        self.configure(bg=BG)
+        self.resizable(False, False)
+        self.transient(master)
+
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True, padx=24, pady=22)
+
+        tone = {"error": "#FF6B6B", "warn": AMBER, "ok": GREEN}.get(kind, ACCENT)
+        line = tk.Frame(body, bg=tone, width=3)
+        line.pack(side="left", fill="y", padx=(0, 14))
+        tk.Label(body, text=message, fg="#C2C5D2", bg=BG, font=F_INPUT,
+                 justify="left", anchor="w", wraplength=390).pack(
+                     side="left", fill="both", expand=True)
+
+        row = tk.Frame(self, bg=BG)
+        row.pack(fill="x", padx=24, pady=(0, 22))
+        if ask:
+            RoundButton(row, "Cancelar", self._no, height=40, width=118, fill=CARD,
+                        hover=CARD_HI, fg=TEXT,
+                        font=("Segoe UI Semibold", -12)).pack(side="right", padx=(8, 0))
+            RoundButton(row, "Continuar", self._yes, height=40, width=118, radius=10,
+                        font=("Segoe UI Semibold", -12)).pack(side="right")
+        else:
+            RoundButton(row, "Entendido", self._yes, height=40, width=132,
+                        radius=10, font=("Segoe UI Semibold", -12)).pack(side="right")
+
+        self.update_idletasks()
+        w = max(360, self.winfo_reqwidth())
+        h = self.winfo_reqheight()
+        mx, my = master.winfo_rootx(), master.winfo_rooty()
+        mw, mh = master.winfo_width(), master.winfo_height()
+        self.geometry(f"{w}x{h}+{mx + (mw - w) // 2}+{my + (mh - h) // 3}")
+        self.deiconify()
+        dark_titlebar(self)
+        self.after(200, lambda: dark_titlebar(self))
+        self.grab_set()
+        self.bind("<Return>", lambda _e: self._yes())
+        self.bind("<Escape>", lambda _e: self._no())
+        self.protocol("WM_DELETE_WINDOW", self._no)
+        self.wait_window(self)
+
+    def _yes(self) -> None:
+        self.result = True
+        self.destroy()
+
+    def _no(self) -> None:
+        self.result = False
+        self.destroy()
+
+
+
+
+def dark_titlebar(win: tk.Misc) -> None:
+    """Pinta la barra de titulo nativa en modo oscuro. Silencioso si falla."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        value = ctypes.c_int(1)
+        for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE, luego el legacy
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(value), ctypes.sizeof(value)) == 0:
+                break
+    except Exception:
+        pass
+
+
 class Launcher(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Lunar Offline Launcher")
-        self.geometry("640x600")
-        self.minsize(580, 560)
-        self.configure(bg="#141418")
+        self.geometry("580x572")
+        self.resizable(False, False)
+        self.configure(bg=BG)
+        try:
+            self.tk.call("tk", "scaling", 1.0)
+        except tk.TclError:
+            pass
 
         self.cfg = self._load_cfg()
         self.proc: subprocess.Popen | None = None
         self.log_path: Path | None = None
         self.pending_restore = False
         self.launcher_warned = False
+        self._advanced_open = False
+        self._base_h = 572
+        self._full_h = 704
 
         # recuperacion de un cierre sucio
         if SWAP_MARKER.exists() or ORIGINAL_ACCOUNTS.is_file():
             accounts_restore()
 
-        self._styles()
         self._build()
 
     # ---------------- persistence ----------------
@@ -424,6 +762,7 @@ class Launcher(tk.Tk):
         base = {
             "nick": "", "version": "1.8.9", "ram": 3072, "server": "",
             "width": 1280, "height": 720, "fullscreen": False, "java": "",
+            "advanced": False,
         }
         if CONFIG.is_file():
             try:
@@ -435,140 +774,178 @@ class Launcher(tk.Tk):
     def _save_cfg(self) -> None:
         CONFIG.write_text(json.dumps(self.cfg, indent=2), encoding="utf-8")
 
-    # ---------------- styles ----------------
+    # ---------------- dialogs ----------------
 
-    def _styles(self) -> None:
-        st = ttk.Style(self)
-        try:
-            st.theme_use("clam")
-        except tk.TclError:
-            pass
-        st.configure(".", background="#141418", foreground="#e8e8ee",
-                     fieldbackground="#1e1e26", bordercolor="#2c2c38")
-        st.configure("TLabel", background="#141418", foreground="#c9c9d6")
-        st.configure("H1.TLabel", font=("Segoe UI", 16, "bold"), foreground="#ffffff")
-        st.configure("Hint.TLabel", foreground="#7b7b90", font=("Segoe UI", 8))
-        st.configure("Warn.TLabel", foreground="#e0a030", font=("Segoe UI", 8))
-        st.configure("TEntry", fieldbackground="#1e1e26", foreground="#ffffff",
-                     insertcolor="#ffffff", borderwidth=1)
-        st.configure("TCombobox", fieldbackground="#1e1e26", foreground="#ffffff",
-                     background="#1e1e26")
-        st.configure("Launch.TButton", font=("Segoe UI", 11, "bold"),
-                     background="#5b8cff", foreground="#0a0a0f", borderwidth=0, padding=10)
-        st.map("Launch.TButton", background=[("active", "#7aa2ff"), ("disabled", "#33333f")])
-        st.configure("Tool.TButton", background="#23232d", foreground="#d6d6e2",
-                     borderwidth=0, padding=6)
-        st.map("Tool.TButton", background=[("active", "#2e2e3b")])
-        st.configure("TCheckbutton", background="#141418", foreground="#c9c9d6")
+    def _info(self, title: str, msg: str, kind: str = "info") -> None:
+        Dialog(self, title, msg, kind=kind)
+
+    def _ask(self, title: str, msg: str) -> bool:
+        return Dialog(self, title, msg, kind="warn", ask=True).result
 
     # ---------------- layout ----------------
 
     def _build(self) -> None:
-        head = ttk.Frame(self)
-        head.pack(fill="x", padx=22, pady=(20, 4))
-        ttk.Label(head, text="Lunar Client — modo offline", style="H1.TLabel").pack(anchor="w")
-        ttk.Label(head, text="Lunar completo: mods, FPS, keystrokes. Nick no premium.",
-                  style="Hint.TLabel").pack(anchor="w", pady=(2, 0))
+        # ---- cabecera
+        head = tk.Frame(self, bg=BG)
+        head.pack(fill="x", padx=26, pady=(24, 0))
 
-        body = ttk.Frame(self)
-        body.pack(fill="both", expand=True, padx=22, pady=6)
-        body.columnconfigure(1, weight=1)
+        brand = tk.Frame(head, bg=BG)
+        brand.pack(side="left", anchor="w")
+        mark = tk.Canvas(brand, width=10, height=10, bg=BG, highlightthickness=0)
+        mark.pack(side="left", padx=(0, 9), pady=(8, 0))
+        mark.create_oval(0, 0, 10, 10, fill=ACCENT, outline="")
+        tk.Label(brand, text="Lunar Offline", fg=TEXT, bg=BG,
+                 font=F_TITLE).pack(side="left")
 
-        row = 0
+        tk.Label(head, text=f"v{APP_VERSION}", fg=MUTED, bg=BG,
+                 font=F_SMALL).pack(side="right", pady=(12, 0))
+        tk.Label(self, text="Lunar Client completo con un nick no premium.",
+                 fg=MUTED, bg=BG, font=F_SUB, anchor="w") \
+            .pack(fill="x", padx=26, pady=(4, 0))
 
-        def label(text: str) -> None:
-            nonlocal row
-            ttk.Label(body, text=text).grid(row=row, column=0, sticky="w", pady=7, padx=(0, 12))
+        # ---- cuerpo
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="x", padx=26, pady=(22, 0))
 
-        label("Nick")
+        caps(body, "Nick").pack(fill="x")
         self.nick_var = tk.StringVar(value=self.cfg.get("nick") or "Player")
-        self.nick_entry = ttk.Entry(body, textvariable=self.nick_var, font=("Consolas", 11))
-        self.nick_entry.grid(row=row, column=1, sticky="ew", pady=7)
-        row += 1
-        ttk.Label(body, text="1-16 caracteres: A-Z, 0-9, _", style="Hint.TLabel") \
-            .grid(row=row, column=1, sticky="w")
-        row += 1
+        self.nick_entry = RoundEntry(body, self.nick_var, height=46)
+        self.nick_entry.pack(fill="x", pady=(6, 0))
 
-        label("Version")
+        # fila version / ram
+        row = tk.Frame(body, bg=BG)
+        row.pack(fill="x", pady=(16, 0))
+        row.columnconfigure(0, weight=0, minsize=190)
+        row.columnconfigure(1, weight=1)
+
+        left = tk.Frame(row, bg=BG)
+        left.grid(row=0, column=0, sticky="new", padx=(0, 16))
+        caps(left, "Version").pack(fill="x")
         self.version_var = tk.StringVar(value=self.cfg.get("version", "1.8.9"))
         vers = available_versions() or ["1.8.9"]
         if self.version_var.get() not in vers:
             self.version_var.set(vers[0])
-        ttk.Combobox(body, textvariable=self.version_var, values=vers,
-                     state="readonly").grid(row=row, column=1, sticky="ew", pady=7)
-        row += 1
+        Segmented(left, vers, self.version_var).pack(fill="x", pady=(6, 0))
 
-        label("Servidor")
-        self.server_var = tk.StringVar(value=self.cfg.get("server", ""))
-        ttk.Entry(body, textvariable=self.server_var).grid(row=row, column=1, sticky="ew", pady=7)
-        row += 1
-        ttk.Label(body, text="host o host:puerto. Vacio = menu principal.",
-                  style="Hint.TLabel").grid(row=row, column=1, sticky="w")
-        row += 1
-
-        label("RAM (MB)")
-        ram_frame = ttk.Frame(body)
-        ram_frame.grid(row=row, column=1, sticky="ew", pady=7)
-        ram_frame.columnconfigure(0, weight=1)
+        right = tk.Frame(row, bg=BG)
+        right.grid(row=0, column=1, sticky="new")
+        cap_row = tk.Frame(right, bg=BG)
+        cap_row.pack(fill="x")
+        caps(cap_row, "Memoria").pack(side="left")
+        self.ram_lbl = tk.Label(cap_row, text="", fg=TEXT, bg=BG,
+                                font=("Segoe UI Semibold", -9))
+        self.ram_lbl.pack(side="right")
         self.ram_var = tk.IntVar(value=int(self.cfg.get("ram", 3072)))
-        ttk.Scale(ram_frame, from_=1024, to=8192, variable=self.ram_var,
-                  command=lambda v: self._ram_label(v)).grid(row=0, column=0, sticky="ew")
-        self.ram_lbl = ttk.Label(ram_frame, text=f"{self.ram_var.get()} MB", width=9)
-        self.ram_lbl.grid(row=0, column=1, padx=(10, 0))
-        row += 1
+        Slider(right, self.ram_var, 1024, 8192, step=256,
+               on_change=self._ram_label).pack(fill="x", pady=(6, 0))
+        self._ram_label()
 
-        label("Resolucion")
-        res = ttk.Frame(body)
-        res.grid(row=row, column=1, sticky="ew", pady=7)
+        # servidor
+        caps(body, "Servidor").pack(fill="x", pady=(16, 0))
+        self.server_var = tk.StringVar(value=self.cfg.get("server", ""))
+        self.server_entry = RoundEntry(body, self.server_var, height=42)
+        self.server_entry.pack(fill="x", pady=(6, 0))
+        tk.Label(body, text="host o host:puerto — vacio entra al menu principal",
+                 fg=MUTED, bg=BG, font=F_SMALL, anchor="w").pack(fill="x", pady=(5, 0))
+
+        # avanzado
+        adv_head = tk.Frame(body, bg=BG)
+        adv_head.pack(fill="x", pady=(14, 0))
+        self.adv_link = Link(adv_head, "Avanzado", self._toggle_advanced,
+                             color="#8E94A6")
+        self.adv_link.pack(side="left")
+
+        self.adv = tk.Frame(body, bg=BG)
+        self.adv.columnconfigure(3, weight=1)
+
+        caps(self.adv, "Resolucion").grid(row=0, column=0, sticky="w", pady=(10, 0))
+        res = tk.Frame(self.adv, bg=BG)
+        res.grid(row=0, column=1, columnspan=3, sticky="w", pady=(10, 0), padx=(14, 0))
         self.w_var = tk.StringVar(value=str(self.cfg.get("width", 1280)))
         self.h_var = tk.StringVar(value=str(self.cfg.get("height", 720)))
-        ttk.Entry(res, textvariable=self.w_var, width=7).grid(row=0, column=0)
-        ttk.Label(res, text="x").grid(row=0, column=1, padx=6)
-        ttk.Entry(res, textvariable=self.h_var, width=7).grid(row=0, column=2)
+        w_entry = tk.Entry(res, textvariable=self.w_var, width=6, bd=0, relief="flat",
+                           bg=CARD, fg=TEXT, insertbackground=ACCENT, font=F_INPUT,
+                           highlightthickness=1, highlightbackground=BORDER,
+                           highlightcolor=ACCENT, justify="center")
+        w_entry.pack(side="left", ipady=5)
+        tk.Label(res, text="x", fg=MUTED, bg=BG, font=F_INPUT).pack(side="left", padx=7)
+        h_entry = tk.Entry(res, textvariable=self.h_var, width=6, bd=0, relief="flat",
+                           bg=CARD, fg=TEXT, insertbackground=ACCENT, font=F_INPUT,
+                           highlightthickness=1, highlightbackground=BORDER,
+                           highlightcolor=ACCENT, justify="center")
+        h_entry.pack(side="left", ipady=5)
+
         self.fs_var = tk.BooleanVar(value=bool(self.cfg.get("fullscreen", False)))
-        ttk.Checkbutton(res, text="Pantalla completa", variable=self.fs_var) \
-            .grid(row=0, column=3, padx=(18, 0))
-        row += 1
+        fs_box = tk.Frame(self.adv, bg=BG)
+        fs_box.grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        Toggle(fs_box, self.fs_var).pack(side="left")
+        tk.Label(fs_box, text="Pantalla completa", fg="#B9BCC9", bg=BG,
+                 font=F_SUB).pack(side="left", padx=(9, 0))
 
-        ttk.Separator(body, orient="horizontal").grid(row=row, column=0, columnspan=2,
-                                                      sticky="ew", pady=12)
-        row += 1
-
-        label("Java")
-        jf = ttk.Frame(body)
-        jf.grid(row=row, column=1, sticky="ew", pady=7)
+        caps(self.adv, "Java").grid(row=2, column=0, sticky="w", pady=(12, 0))
+        jf = tk.Frame(self.adv, bg=BG)
+        jf.grid(row=2, column=1, columnspan=3, sticky="ew", padx=(14, 0), pady=(12, 0))
         jf.columnconfigure(0, weight=1)
         self.java_var = tk.StringVar(value=self.cfg.get("java") or (find_java() or ""))
-        ttk.Entry(jf, textvariable=self.java_var).grid(row=0, column=0, sticky="ew")
-        ttk.Button(jf, text="...", width=3, style="Tool.TButton",
-                   command=self._pick_java).grid(row=0, column=1, padx=(6, 0))
-        row += 1
+        tk.Entry(jf, textvariable=self.java_var, bd=0, relief="flat", bg=CARD,
+                 fg=TEXT, insertbackground=ACCENT, font=("Consolas", -10),
+                 highlightthickness=1, highlightbackground=BORDER,
+                 highlightcolor=ACCENT).grid(row=0, column=0, sticky="ew", ipady=6)
+        Link(jf, "Examinar", self._pick_java, color="#8E94A6") \
+            .grid(row=0, column=1, padx=(10, 0))
 
-        ttk.Label(body, text="La cuenta de Lunar se cambia por una offline mientras juegas "
-                             "y se restaura al salir.",
-                  style="Warn.TLabel").grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        # ---- pie fijo
+        foot = tk.Frame(self, bg=BG)
+        foot.pack(fill="x", padx=26, pady=(26, 20))
 
-        self.launch_btn = ttk.Button(self, text="JUGAR CON LUNAR", style="Launch.TButton",
-                                     command=self.launch)
-        self.launch_btn.pack(fill="x", padx=22, pady=(12, 6))
+        self.launch_btn = RoundButton(foot, "Jugar con Lunar", self.launch, height=54)
+        self.launch_btn.pack(fill="x")
 
-        foot = ttk.Frame(self)
-        foot.pack(fill="x", padx=22, pady=(0, 14))
-        ttk.Button(foot, text="Ver log", style="Tool.TButton",
-                   command=self._open_log).pack(side="left")
-        ttk.Button(foot, text="Diagnostico", style="Tool.TButton",
-                   command=self._diagnose).pack(side="left", padx=(6, 0))
-        ttk.Button(foot, text="Restaurar cuenta", style="Tool.TButton",
-                   command=self._restore).pack(side="left", padx=(6, 0))
-        self.status = ttk.Label(foot, text="Listo.", style="Hint.TLabel")
-        self.status.pack(side="right")
+        bar = tk.Frame(foot, bg=BG)
+        bar.pack(fill="x", pady=(10, 0))
+        self.status = tk.Label(bar, text="Listo", fg=MUTED, bg=BG, font=F_SMALL,
+                               anchor="w")
+        self.status.pack(side="left")
+        Link(bar, "Restaurar", self._restore).pack(side="right")
+        Link(bar, "Diagnostico", self._diagnose).pack(side="right", padx=(0, 14))
+        Link(bar, "Log", self._open_log).pack(side="right", padx=(0, 14))
 
-        self.nick_entry.focus_set()
+        # medir las dos alturas para que el panel avanzado no rompa el layout
+        self.adv.pack(fill="x")
+        self.update_idletasks()
+        self._full_h = self.winfo_reqheight()
+        self.adv.pack_forget()
+        self.update_idletasks()
+        self._base_h = self.winfo_reqheight()
+        self.geometry(f"580x{self._base_h}")
+        if self.cfg.get("advanced"):
+            self._toggle_advanced()
+
+        self.update_idletasks()
+        dark_titlebar(self)
+        self.after(250, lambda: dark_titlebar(self))
+        self.nick_entry.focus()
         self.bind("<Return>", lambda _e: self.launch())
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _ram_label(self, v) -> None:
-        self.ram_lbl.configure(text=f"{int(float(v))} MB")
+    def _toggle_advanced(self) -> None:
+        self._advanced_open = not self._advanced_open
+        if self._advanced_open:
+            self.adv.pack(fill="x")
+            self.adv_link.configure(text="Ocultar avanzado")
+            self.geometry(f"580x{self._full_h}")
+        else:
+            self.adv.pack_forget()
+            self.adv_link.configure(text="Avanzado")
+            self.geometry(f"580x{self._base_h}")
+        self.cfg["advanced"] = self._advanced_open
+        try:
+            self._save_cfg()
+        except Exception:
+            pass
+
+    def _ram_label(self, _v=None) -> None:
+        self.ram_lbl.configure(text=f"{int(self.ram_var.get())} MB")
 
     def report_callback_exception(self, exc, val, tb) -> None:  # noqa: N802
         """Una excepcion en un callback de Tk no puede desaparecer en silencio."""
@@ -579,10 +956,9 @@ class Launcher(tk.Tk):
         except Exception:
             pass
         try:
-            messagebox.showerror(
-                "Error interno",
-                f"{val}\n\nDetalle guardado en:\n{APP_DIR / 'error.log'}",
-            )
+            self._info("Error interno",
+                       f"{val}\n\nDetalle guardado en:\n{APP_DIR / 'error.log'}",
+                       kind="error")
         except Exception:
             pass
 
@@ -596,27 +972,29 @@ class Launcher(tk.Tk):
 
     # ---------------- actions ----------------
 
-    def _set_status(self, text: str) -> None:
-        self.status.configure(text=text)
+    def _set_status(self, text: str, color: str = MUTED) -> None:
+        self.status.configure(text=text, fg=color)
         self.update_idletasks()
 
     def _restore(self) -> None:
         if accounts_restore():
-            messagebox.showinfo("Cuenta", "Cuenta premium restaurada.\n"
-                                          "Los logins hechos mientras jugabas se conservaron.")
+            self._info("Cuenta restaurada",
+                       "Tu cuenta premium volvio a quedar activa.\n"
+                       "Los logins hechos mientras jugabas se conservaron.", kind="ok")
         else:
-            messagebox.showinfo("Cuenta", "No hay nada que restaurar.")
+            self._info("Nada que restaurar",
+                       "No hay ningun cambio de cuenta pendiente.")
 
     def _diagnose(self) -> None:
         java = self.java_var.get().strip()
         natives = find_natives()
         lines = [
-            f"Lunar root: {LUNAR_ROOT}  -> {'OK' if LUNAR_ROOT.is_dir() else 'FALTA'}",
-            f"Multiver:   {MULTIVER}  -> {'OK' if MULTIVER.is_dir() else 'FALTA'}",
-            f"Java:       {java or 'NO ENCONTRADO'}  -> {'OK' if java and Path(java).is_file() else 'FALTA'}",
+            f"Lunar:      {LUNAR_ROOT}  {'OK' if LUNAR_ROOT.is_dir() else 'FALTA'}",
+            f"Multiver:   {MULTIVER}  {'OK' if MULTIVER.is_dir() else 'FALTA'}",
+            f"Java:       {'OK' if java and Path(java).is_file() else 'FALTA'}",
             f"Natives:    {natives or 'NO ENCONTRADO'}",
-            f"Minecraft:  {MC_DIR}  -> {'OK' if MC_DIR.is_dir() else 'FALTA'}",
-            f"Cuentas:    {ACCOUNTS}  -> {'OK' if ACCOUNTS.is_file() else 'FALTA'}",
+            f"Minecraft:  {'OK' if MC_DIR.is_dir() else 'FALTA'}",
+            f"Cuentas:    {'OK' if ACCOUNTS.is_file() else 'FALTA'}",
             "",
             "Versiones listas: " + (", ".join(available_versions()) or "ninguna"),
         ]
@@ -624,40 +1002,40 @@ class Launcher(tk.Tk):
             missing = [j for j in classpath_jars(v) if not (MULTIVER / j).is_file()]
             lines.append(f"  {v}: {len(classpath_jars(v))} jars" +
                          (f", FALTAN {missing}" if missing else ""))
-        messagebox.showinfo("Diagnostico", "\n".join(lines))
+        self._info("Diagnostico", "\n".join(lines))
 
     def _open_log(self) -> None:
         if self.log_path and self.log_path.is_file():
             subprocess.Popen(["notepad.exe", str(self.log_path)])
         else:
-            messagebox.showinfo("Log", "Todavia no lanzaste el juego en esta sesion.")
+            self._info("Log", "Todavia no lanzaste el juego en esta sesion.")
 
     def launch(self) -> None:
         if self.proc and self.proc.poll() is None:
-            messagebox.showinfo("Ya corriendo", "Lunar ya esta abierto.")
+            self._info("Ya esta abierto", "Lunar ya se esta ejecutando.")
             return
 
         # El launcher oficial reescribe accounts.json: si esta abierto mientras
         # el swap vive, la app no puede restaurar limpio y Lunar puede cerrar
         # sesion. Se bloquea el arranque hasta que se cierre.
         if official_launcher_running():
-            messagebox.showerror(
-                "Lunar Client oficial abierto",
-                "Cierra 'Lunar Client' antes de jugar en modo offline.\n\n"
-                "Mientras el launcher oficial esta abierto reescribe accounts.json "
-                "y tu cuenta premium puede cerrar sesion.\n\n"
-                "Cierra el launcher y vuelve a intentar.")
+            self._info(
+                "Cierra Lunar Client",
+                "El launcher oficial esta abierto y reescribe accounts.json.\n"
+                "Cierralo y vuelve a pulsar Jugar.", kind="warn")
             return
 
         nick = self.nick_var.get().strip()
         if not NICK_RE.match(nick):
-            messagebox.showerror("Nick invalido",
-                                 "El nick debe tener 1-16 caracteres: A-Z, 0-9 o _.")
+            self._info("Nick invalido",
+                       "Usa de 1 a 16 caracteres: A-Z, 0-9 o _.", kind="error")
             return
 
         java = self.java_var.get().strip()
         if not java or not Path(java).is_file():
-            messagebox.showerror("Java", "No encuentro un javaw.exe valido. Usa el boton '...'.")
+            self._info("Falta Java",
+                       "No encuentro un javaw.exe valido.\nAbre Avanzado y usa Examinar.",
+                       kind="error")
             return
 
         try:
@@ -665,7 +1043,8 @@ class Launcher(tk.Tk):
             width = int(self.w_var.get())
             height = int(self.h_var.get())
         except ValueError:
-            messagebox.showerror("Valores", "RAM y resolucion deben ser numeros.")
+            self._info("Valores invalidos", "RAM y resolucion deben ser numeros.",
+                       kind="error")
             return
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -676,7 +1055,7 @@ class Launcher(tk.Tk):
                                 self.server_var.get(), width, height,
                                 self.fs_var.get(), java)
         except Exception as exc:
-            messagebox.showerror("Error", str(exc))
+            self._info("Error", str(exc), kind="error")
             return
 
         self.cfg.update({
@@ -692,7 +1071,8 @@ class Launcher(tk.Tk):
         try:
             accounts_swap(nick)
         except Exception as exc:
-            messagebox.showerror("Cuentas", f"No pude escribir accounts.json:\n{exc}")
+            self._info("Cuentas", f"No pude escribir accounts.json:\n{exc}",
+                       kind="error")
             return
 
         self.pending_restore = True
@@ -708,10 +1088,11 @@ class Launcher(tk.Tk):
         except Exception as exc:
             accounts_restore()
             self.pending_restore = False
-            messagebox.showerror("No arranco", str(exc))
+            self._info("No arranco", str(exc), kind="error")
             return
 
-        self._set_status(f"Corriendo (PID {self.proc.pid})")
+        self.launch_btn.set_text("Lunar abierto")
+        self._set_status(f"Corriendo · PID {self.proc.pid}", GREEN)
         self.after(4000, self._watch)
 
     def _watch(self) -> None:
@@ -721,21 +1102,22 @@ class Launcher(tk.Tk):
         if rc is None:
             if official_launcher_running() and not self.launcher_warned:
                 self.launcher_warned = True
-                self._set_status("OJO: launcher oficial abierto — cierra Lunar Client ya")
+                self._set_status("Cierra el launcher oficial", AMBER)
             elif not official_launcher_running():
-                self._set_status(f"Corriendo (PID {self.proc.pid})")
+                self._set_status(f"Corriendo · PID {self.proc.pid}", GREEN)
             self.after(3000, self._watch)
         else:
             if self.pending_restore:
                 accounts_restore()
                 self.pending_restore = False
-            self._set_status(f"Cerrado (codigo {rc}) — cuenta restaurada")
+            self.launch_btn.set_text("Jugar con Lunar")
+            self._set_status("Cuenta restaurada", MUTED)
 
     def _on_close(self) -> None:
         if self.proc and self.proc.poll() is None:
-            if not messagebox.askyesno("Lunar abierto",
-                                       "El juego sigue corriendo. Cerrar la app igual?\n"
-                                       "La cuenta se restaura cuando el juego termine."):
+            if not self._ask("Lunar sigue abierto",
+                             "El juego esta corriendo. Cerrar la ventana igualmente?\n"
+                             "La cuenta se restaura sola cuando el juego termine."):
                 return
             self.after(1500, self._watch)
             self.iconify()
@@ -743,6 +1125,8 @@ class Launcher(tk.Tk):
         if self.pending_restore:
             accounts_restore()
         self.destroy()
+
+
 
 
 def selftest() -> int:
