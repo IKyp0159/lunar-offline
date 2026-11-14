@@ -271,6 +271,19 @@ Nada de esto se sube a ningún sitio.
 
 ## Cambios
 
+### 1.1.1
+
+- **Arreglado el botón JUGAR CON LUNAR que no hacía nada.** La detección del
+  launcher oficial decodificaba la salida de `tasklist` como UTF-8; con cualquier
+  carácter acentuado (el texto en español "no hay tareas ejecutándose") reventaba,
+  devolvía `None` y el callback de Tkinter moría en silencio. Ahora decodifica en
+  latin-1 y nunca lanza.
+- Cualquier excepción en un callback de la interfaz se escribe en
+  `%APPDATA%\LunarOffline\error.log` y se muestra en un diálogo, en vez de
+  desaparecer.
+- Al restaurar se limpian las entradas offline muertas (`legacy` sin token) que
+  dejaron versiones anteriores, sin tocar las cuentas offline que ya tenías.
+
 ### 1.1.0
 
 - El swap de cuentas es **aditivo**: añade la cuenta offline sin borrar las

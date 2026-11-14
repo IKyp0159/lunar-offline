@@ -1,4 +1,4 @@
-LUNAR OFFLINE LAUNCHER — portable  v1.1.0
+LUNAR OFFLINE LAUNCHER — portable  v1.1.1
 ===========================================
 
 Un solo .exe. No necesita Python ni instalar nada.
@@ -63,6 +63,12 @@ NO FUNCIONA CON
 ---------------
 Cosmeticos y skin premium (van atados a la cuenta de Microsoft).
 Servidores premium.
+
+CAMBIOS 1.1.1
+-------------
+- Arreglado el boton JUGAR que no hacia nada.
+- Cualquier error de la interfaz se guarda en
+  %APPDATA%\LunarOffline\error.log y se muestra en un dialogo.
 
 CAMBIOS 1.1.0
 -------------

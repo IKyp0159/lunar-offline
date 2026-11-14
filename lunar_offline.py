@@ -222,11 +222,14 @@ def official_launcher_running() -> bool:
     if os.name != "nt":
         return False
     try:
-        out = subprocess.run(
+        res = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq Lunar Client.exe", "/NH"],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, timeout=8,
             creationflags=subprocess.CREATE_NO_WINDOW,  # type: ignore[attr-defined]
-        ).stdout
+        )
+        # tasklist escribe en la codepage OEM: decodificar como UTF-8 revienta
+        # con cualquier acento y deja stdout en None.
+        out = (res.stdout or b"").decode("latin-1", errors="replace")
     except Exception:
         return False
     return "Lunar Client.exe" in out
@@ -248,6 +251,16 @@ def accounts_restore() -> bool:
     current = read_accounts(ACCOUNTS)
 
     merged = merge_accounts(original, current, drop_id=offline_id)
+
+    # Limpieza: entradas offline muertas (legacy sin token) que no estaban en el
+    # original. Son basura de arranques anteriores de la app; las cuentas offline
+    # que el usuario ya tenia se conservan porque estan en original.
+    original_ids = set((original.get("accounts") or {}))
+    merged["accounts"] = {
+        k: v for k, v in merged["accounts"].items()
+        if k in original_ids or not (v.get("legacy") and str(v.get("accessToken")) == "0")
+    }
+
     ACCOUNTS.parent.mkdir(parents=True, exist_ok=True)
     ACCOUNTS.write_text(json.dumps(merged, indent=2), encoding="utf-8")
 
@@ -556,6 +569,22 @@ class Launcher(tk.Tk):
 
     def _ram_label(self, v) -> None:
         self.ram_lbl.configure(text=f"{int(float(v))} MB")
+
+    def report_callback_exception(self, exc, val, tb) -> None:  # noqa: N802
+        """Una excepcion en un callback de Tk no puede desaparecer en silencio."""
+        import traceback
+        texto = "".join(traceback.format_exception(exc, val, tb))
+        try:
+            (APP_DIR / "error.log").write_text(texto, encoding="utf-8")
+        except Exception:
+            pass
+        try:
+            messagebox.showerror(
+                "Error interno",
+                f"{val}\n\nDetalle guardado en:\n{APP_DIR / 'error.log'}",
+            )
+        except Exception:
+            pass
 
     def _pick_java(self) -> None:
         path = filedialog.askopenfilename(
