@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -29,7 +31,8 @@ import uuid
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import filedialog
+from tkinter import font as tkfont
 
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "LunarOffline"
 APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -394,33 +397,46 @@ def build_command(nick: str, version: str, ram_mb: int, server: str,
 
 
 # --------------------------------------------------------------------------- #
-# gui
+# gui — toolkit propio sobre Canvas, monocromo (negro / blanco) y animado
 # --------------------------------------------------------------------------- #
 
-# --------------------------------------------------------------------------- #
-# minimal ui toolkit (canvas-drawn, sin ttk, sin bordes grises del sistema)
-# --------------------------------------------------------------------------- #
+# Paleta: negro puro y blanco, con grises solo para dar profundidad.
+# Los unicos colores fuera de la escala son los semanticos (error y aviso).
+BG        = "#050505"   # ventana
+SURFACE   = "#0D0D0D"   # tarjetas
+FIELD     = "#141414"   # inputs, selectores
+FIELD_HI  = "#1E1E1E"   # hover
+BORDER    = "#262626"
+BORDER_HI = "#424242"
+WHITE     = "#FFFFFF"
+INK       = "#050505"   # texto sobre superficies blancas
+TEXT      = "#FFFFFF"
+TEXT_DIM  = "#CFCFCF"
+MUTED     = "#9A9A9A"   # labels (contraste AA sobre SURFACE)
+FAINT     = "#808080"   # textos de ayuda
+AMBER     = "#F0B35E"
+RED       = "#FF6B6B"
 
-BG        = "#0B0C10"
-CARD      = "#13151C"
-CARD_HI   = "#191C25"
-BORDER    = "#222633"
-BORDER_HI = "#3C4459"
-TEXT      = "#EEEFF4"
-MUTED     = "#6B7080"
-ACCENT    = "#4C7DFF"
-ACCENT_HI = "#6D95FF"
-AMBER     = "#E5AE5A"
-GREEN     = "#4ED08A"
+APP_VERSION = "1.4.0"
+WIN_W = 600
+SKY_H = 72
 
-APP_VERSION = "1.2.0"
-
-F_TITLE = ("Segoe UI Semibold", -22)
-F_SUB   = ("Segoe UI", -11)
-F_CAPS  = ("Segoe UI Semibold", -9)
+F_TITLE = ("Segoe UI Semibold", -24)
+F_SUB   = ("Segoe UI", -12)
+F_CAPS  = ("Segoe UI Semibold", -10)
 F_INPUT = ("Segoe UI", -13)
-F_BTN   = ("Segoe UI Semibold", -14)
-F_SMALL = ("Segoe UI", -10)
+F_BTN   = ("Segoe UI Semibold", -15)
+F_SMALL = ("Segoe UI", -11)
+F_LINK  = ("Segoe UI", -12)
+F_MONO  = ("Consolas", -11)
+
+
+def lerp_color(c1: str, c2: str, t: float) -> str:
+    """Mezcla lineal entre dos colores #rrggbb."""
+    t = min(1.0, max(0.0, t))
+    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#%02x%02x%02x" % tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
 
 
 def round_rect(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
@@ -435,69 +451,175 @@ def round_rect(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
     return cv.create_polygon(pts, smooth=True, splinesteps=48, **kw)
 
 
+def strip_round(cv: tk.Canvas, x1: float, y1: float, x2: float, y2: float,
+                r: float, color_fn, step: int = 2) -> None:
+    """Rectangulo redondeado pintado en columnas; `color_fn(0..1)` da el color de cada una."""
+    w = x2 - x1
+    n = int(w // step)
+    if n < 2:
+        return
+    for i in range(n):
+        x = x1 + i * step + step / 2
+        d = min(x - x1, x2 - x)
+        dy = 0.0
+        if d < r:                              # recorte de la esquina
+            dy = r - math.sqrt(max(0.0, r * r - (r - d) ** 2))
+        cv.create_line(x, y1 + dy, x, y2 - dy, fill=color_fn((x - x1) / w), width=step)
+
+
+class Tween:
+    """Valor que se acerca suavemente a un objetivo (ease-out). Llama a `on_change` en cada paso."""
+
+    def __init__(self, widget, on_change, value: float = 0.0, rate: float = 0.22,
+                 done=None) -> None:
+        self.w, self.cb, self.done = widget, on_change, done
+        self.value = self.target = float(value)
+        self.rate = rate
+        self._job = None
+
+    def go(self, target: float) -> None:
+        self.target = float(target)
+        if self._job is None:
+            self._step()
+
+    def jump(self, value: float) -> None:
+        self.value = self.target = float(value)
+        try:
+            self.cb()
+        except tk.TclError:
+            pass
+
+    def _step(self) -> None:
+        self._job = None
+        d = self.target - self.value
+        finished = abs(d) < 0.004
+        self.value = self.target if finished else self.value + d * self.rate
+        try:
+            self.cb()
+            if finished:
+                if self.done:
+                    self.done()
+                return
+            self._job = self.w.after(16, self._step)
+        except tk.TclError:                    # el widget ya no existe
+            self._job = None
+
+
 class RoundEntry(tk.Canvas):
-    """Campo de texto plano con esquinas redondeadas y borde de foco."""
+    """Campo de texto plano con borde animado al enfocar, estado de error y sacudida."""
 
     def __init__(self, master, textvariable: tk.Variable, height: int = 44,
-                 font=F_INPUT, pad: int = 15, radius: int = 10) -> None:
-        super().__init__(master, height=height, bg=BG, highlightthickness=0, bd=0)
+                 font=F_INPUT, pad: int = 15, radius: int = 10,
+                 bg: str = SURFACE, counter: int = 0) -> None:
+        super().__init__(master, width=10, height=height, bg=bg,
+                         highlightthickness=0, bd=0)
         self._radius = radius
-        self._focused = False
+        self._pad = pad
+        self._counter = counter
+        self._var = textvariable
+        self._error = False
+        self._focus_tw = Tween(self, self._draw, rate=0.28)
         self.entry = tk.Entry(
             self, textvariable=textvariable, bd=0, relief="flat",
-            bg=CARD, fg=TEXT, insertbackground=ACCENT, font=font,
-            highlightthickness=0, selectbackground=ACCENT, selectforeground="#ffffff",
+            bg=FIELD, fg=TEXT, insertbackground=WHITE, font=font,
+            highlightthickness=0, selectbackground=WHITE, selectforeground=INK,
         )
         self._win = self.create_window(pad, height // 2, anchor="w", window=self.entry)
         self.bind("<Configure>", lambda _e: self._draw())
-        self.entry.bind("<FocusIn>", lambda _e: self._focus(True))
-        self.entry.bind("<FocusOut>", lambda _e: self._focus(False))
+        self.entry.bind("<FocusIn>", lambda _e: self._focus_tw.go(1.0))
+        self.entry.bind("<FocusOut>", lambda _e: self._focus_tw.go(0.0))
         self.entry.bind("<Button-1>", lambda _e: self.entry.focus_set())
+        self.bind("<Button-1>", lambda _e: self.entry.focus_set())
+        if counter:
+            textvariable.trace_add("write", lambda *_a: self._draw())
 
-    def _focus(self, on: bool) -> None:
-        self._focused = on
-        self._draw()
+    def set_error(self, on: bool) -> None:
+        if on != self._error:
+            self._error = on
+            self._draw()
+
+    def shake(self) -> None:
+        """Sacudida horizontal corta: avisa que el valor no sirve."""
+        offsets = [9, -9, 7, -7, 4, -4, 0]
+
+        def step(i: int = 0) -> None:
+            try:
+                d = offsets[i]
+                self.pack_configure(padx=(max(d, 0), max(-d, 0)))
+                if i + 1 < len(offsets):
+                    self.after(26, lambda: step(i + 1))
+            except tk.TclError:
+                pass
+        step()
 
     def _draw(self) -> None:
         w, h = self.winfo_width(), self.winfo_height()
         if w < 8 or h < 8:
             return
         self.delete("shape")
+        self.delete("count")
+        f = self._focus_tw.value
+        outline = RED if self._error else lerp_color(BORDER, WHITE, f)
         round_rect(self, 0.5, 0.5, w - 1, h - 1, self._radius,
-                   fill=CARD, outline=BORDER_HI if self._focused else BORDER,
-                   width=1.4 if self._focused else 1, tags="shape")
+                   fill=FIELD, outline=outline, width=1 + 0.6 * f, tags="shape")
         self.tag_lower("shape")
-        self.itemconfigure(self._win, width=max(30, w - 2 * 15), height=h - 14)
+        right = self._pad
+        if self._counter:
+            n = len(self._var.get())
+            bad = n > self._counter or n == 0
+            self.create_text(w - self._pad, h / 2, anchor="e", text=f"{n}/{self._counter}",
+                             fill=RED if bad else FAINT, font=F_SMALL, tags="count")
+            right = self._pad + 42
+        self.itemconfigure(self._win, width=max(30, w - self._pad - right), height=h - 14)
 
     def focus(self) -> None:  # type: ignore[override]
         self.entry.focus_set()
 
 
 class RoundButton(tk.Canvas):
-    """Boton primario redondeado con estado hover y texto centrado."""
+    """
+    Boton redondeado.
+      style="primary": blanco con texto negro; al pasar el raton lo cruza un destello.
+      style="ghost":   oscuro con borde que se ilumina en hover.
+    Deshabilitado: borde fino con un trazo de carga recorriendo la base.
+    """
 
     def __init__(self, master, text: str, command, height: int = 52,
-                 fill: str = ACCENT, hover: str = ACCENT_HI,
-                 fg: str = "#FFFFFF", font=F_BTN, radius: int = 12,
-                 width: int = 0) -> None:
+                 font=F_BTN, radius: int = 12, width: int = 0, bg: str = BG,
+                 style: str = "primary", icon: str | None = None) -> None:
         super().__init__(master, height=height, width=width or 120,
-                         bg=BG, highlightthickness=0, bd=0, cursor="hand2")
+                         bg=bg, highlightthickness=0, bd=0, cursor="hand2")
         self._text, self._cmd = text, command
-        self._fill, self._hover, self._fg = fill, hover, fg
         self._font, self._radius = font, radius
+        self._style, self._icon = style, icon
         self._over = False
         self._down = False
+        self._disabled = False
+        self._measure = None
+        self._hover_tw = Tween(self, self._draw, rate=0.25)
+        self._sheen = -1.0
+        self._sheen_job = None
+        self._busy = 0.0
+        self._busy_job = None
         self.bind("<Configure>", lambda _e: self._draw())
         self.bind("<Enter>", lambda _e: self._set(True))
         self.bind("<Leave>", lambda _e: self._set(False))
         self.bind("<ButtonPress-1>", lambda _e: self._press(True))
         self.bind("<ButtonRelease-1>", lambda _e: self._press(False))
 
+    # ---- interaccion
+
     def _set(self, over: bool) -> None:
         self._over = over
-        self._draw()
+        self._hover_tw.go(1.0 if over and not self._disabled else 0.0)
+        if over and not self._disabled and self._style == "primary":
+            self._sheen = 0.0
+            if self._sheen_job is None:
+                self._sheen_step()
 
     def _press(self, down: bool) -> None:
+        if self._disabled:
+            return
         self._down = down
         self._draw()
         if not down and self._over:
@@ -507,40 +629,132 @@ class RoundButton(tk.Canvas):
         self._text = text
         self._draw()
 
+    def set_state(self, text: str, disabled: bool) -> None:
+        self._text = text
+        self._disabled = disabled
+        self._down = False
+        self.configure(cursor="arrow" if disabled else "hand2")
+        if disabled:
+            self._hover_tw.jump(0.0)
+            if self._busy_job is None:
+                self._busy_step()
+        else:
+            self._busy = 0.0
+        self._draw()
+
+    # ---- animacion
+
+    def _sheen_step(self) -> None:
+        self._sheen_job = None
+        self._sheen += 0.055
+        try:
+            if self._sheen >= 1.25:
+                self._sheen = -1.0
+                self._draw()
+                return
+            self._draw()
+            self._sheen_job = self.after(20, self._sheen_step)
+        except tk.TclError:
+            self._sheen_job = None
+
+    def _busy_step(self) -> None:
+        self._busy_job = None
+        if not self._disabled:
+            return
+        self._busy = (self._busy + 0.016) % 1.0
+        try:
+            self._draw()
+            self._busy_job = self.after(30, self._busy_step)
+        except tk.TclError:
+            self._busy_job = None
+
+    # ---- dibujo
+
+    def _text_width(self) -> int:
+        if self._measure is None:
+            self._measure = tkfont.Font(font=self._font).measure
+        return self._measure(self._text)
+
     def _draw(self) -> None:
         w, h = self.winfo_width(), self.winfo_height()
         if w < 8 or h < 8:
             return
         self.delete("all")
-        fill = self._fill
-        if self._down:
-            fill = self._hover
-        elif self._over:
-            fill = self._hover
-        round_rect(self, 0.5, 0.5, w - 1, h - 1, self._radius, fill=fill, outline=fill)
-        self.create_text(w / 2, h / 2, text=self._text, fill=self._fg,
-                         font=self._font)
+        cy = h / 2
+        hv = self._hover_tw.value
+
+        if self._disabled:
+            round_rect(self, 0.5, 0.5, w - 1, h - 1, self._radius,
+                       fill=SURFACE, outline=BORDER_HI)
+            # trazo de carga recorriendo la base
+            r = self._radius
+            x0, x1 = r, w - r
+            seg = (x1 - x0) * 0.28
+            a = x0 + ((x1 - x0) + seg) * self._busy - seg
+            lo, hi = max(x0, a), min(x1, a + seg)
+            if hi > lo:
+                self.create_line(lo, h - 4, hi, h - 4, fill=WHITE, width=2, capstyle="round")
+            tw = self._text_width()
+            x = (w - (tw + 18)) / 2
+            pulse = (math.sin(self._busy * 2 * math.pi) + 1) / 2
+            self.create_oval(x, cy - 3, x + 6, cy + 3, fill=lerp_color(FAINT, WHITE, pulse),
+                             outline="")
+            self.create_text(x + 18, cy, text=self._text, fill=TEXT_DIM, font=self._font,
+                             anchor="w")
+            return
+
+        if self._style == "primary":
+            fg = INK
+            if self._down:
+                round_rect(self, 0.5, 0.5, w - 1, h - 1, self._radius,
+                           fill="#D6D6D6", outline="#D6D6D6")
+            elif 0.0 <= self._sheen <= 1.25:
+                center = -0.2 + self._sheen * 1.2
+
+                def col(f: float) -> str:
+                    k = max(0.0, 1 - abs(f - center) / 0.16)
+                    return lerp_color(WHITE, "#BEBEBE", k * k * 0.9)
+                strip_round(self, 0, 0, w, h, self._radius, col)
+            else:
+                round_rect(self, 0.5, 0.5, w - 1, h - 1, self._radius,
+                           fill=WHITE, outline=WHITE)
+        else:
+            fg = lerp_color(TEXT_DIM, WHITE, hv)
+            round_rect(self, 0.5, 0.5, w - 1, h - 1, self._radius,
+                       fill=lerp_color(FIELD, FIELD_HI, hv),
+                       outline=lerp_color(BORDER_HI, WHITE, hv))
+
+        tw = self._text_width()
+        icon_w = 26 if self._icon else 0
+        x0 = (w - (tw + icon_w)) / 2 + (3 * hv if self._icon else 0)
+        if self._icon == "play":
+            self.create_polygon(x0, cy - 7, x0, cy + 7, x0 + 12, cy, fill=fg, outline=fg)
+        self.create_text(x0 + icon_w, cy, text=self._text, fill=fg,
+                         font=self._font, anchor="w")
 
 
 class Segmented(tk.Canvas):
-    """Selector de opciones tipo pill group."""
+    """Selector con una pastilla blanca que se desliza entre opciones."""
 
     def __init__(self, master, values: list[str], variable: tk.StringVar,
-                 height: int = 34, on_change=None) -> None:
-        super().__init__(master, height=height, bg=BG, highlightthickness=0,
-                         bd=0, cursor="hand2")
+                 height: int = 38, on_change=None, bg: str = SURFACE) -> None:
+        super().__init__(master, width=10, height=height, bg=bg,
+                         highlightthickness=0, bd=0, cursor="hand2")
         self.values = list(values) or ["1.8.9"]
         self.var = variable
         self._on_change = on_change
+        cur = variable.get()
+        idx = self.values.index(cur) if cur in self.values else 0
+        self._pos = Tween(self, self._draw, value=idx, rate=0.3)
         self.bind("<Configure>", lambda _e: self._draw())
         self.bind("<Button-1>", self._click)
 
     def _click(self, ev) -> None:
         n = len(self.values)
-        w = self.winfo_width()
+        w = max(1, self.winfo_width())
         idx = min(n - 1, max(0, int(ev.x / (w / n))))
         self.var.set(self.values[idx])
-        self._draw()
+        self._pos.go(idx)
         if self._on_change:
             self._on_change()
 
@@ -549,32 +763,56 @@ class Segmented(tk.Canvas):
         if w < 8 or h < 8:
             return
         self.delete("all")
-        round_rect(self, 0.5, 0.5, w - 1, h - 1, 9, fill=CARD, outline=BORDER)
+        round_rect(self, 0.5, 0.5, w - 1, h - 1, 10, fill=FIELD, outline=BORDER)
         n = len(self.values)
         seg = w / n
+        pos = self._pos.value
+        px = pos * seg
+        round_rect(self, px + 3, 3, px + seg - 3, h - 3, 8, fill=WHITE, outline=WHITE)
         for i, val in enumerate(self.values):
-            x1 = i * seg
-            active = val == self.var.get()
-            if active:
-                round_rect(self, x1 + 3, 3, x1 + seg - 3, h - 3, 7,
-                           fill=ACCENT, outline=ACCENT)
-            self.create_text(x1 + seg / 2, h / 2, text=val,
-                             font=("Segoe UI Semibold", -11),
-                             fill="#FFFFFF" if active else MUTED)
+            near = max(0.0, 1 - abs(pos - i))
+            self.create_text(i * seg + seg / 2, h / 2, text=val,
+                             font=("Segoe UI Semibold", -12),
+                             fill=lerp_color(MUTED, INK, near))
 
 
 class Slider(tk.Canvas):
-    """Slider horizontal minimalista con pasos fijos."""
+    """Slider con marcas por GB; la bolita crece al pasar el raton y el relleno la sigue."""
 
     def __init__(self, master, variable: tk.IntVar, lo: int, hi: int,
-                 step: int = 256, on_change=None) -> None:
-        super().__init__(master, height=34, bg=BG, highlightthickness=0,
-                         bd=0, cursor="hand2")
+                 step: int = 256, on_change=None, height: int = 38,
+                 bg: str = SURFACE) -> None:
+        super().__init__(master, width=10, height=height, bg=bg,
+                         highlightthickness=0, bd=0, cursor="hand2")
         self.var, self.lo, self.hi, self.step = variable, lo, hi, step
         self._on_change = on_change
+        self._over = False
+        self._drag = False
+        self._shown = Tween(self, self._draw, value=self._frac(), rate=0.32)
+        self._grow = Tween(self, self._draw, rate=0.3)
         self.bind("<Configure>", lambda _e: self._draw())
-        self.bind("<Button-1>", self._set_from_x)
+        self.bind("<Enter>", lambda _e: self._hover(True))
+        self.bind("<Leave>", lambda _e: self._hover(False))
+        self.bind("<ButtonPress-1>", self._press)
+        self.bind("<ButtonRelease-1>", self._release)
         self.bind("<B1-Motion>", self._set_from_x)
+
+    def _frac(self) -> float:
+        f = (self.var.get() - self.lo) / max(1, (self.hi - self.lo))
+        return min(1.0, max(0.0, f))
+
+    def _hover(self, on: bool) -> None:
+        self._over = on
+        self._grow.go(1.0 if (on or self._drag) else 0.0)
+
+    def _press(self, ev) -> None:
+        self._drag = True
+        self._grow.go(1.0)
+        self._set_from_x(ev)
+
+    def _release(self, _ev) -> None:
+        self._drag = False
+        self._grow.go(1.0 if self._over else 0.0)
 
     def _set_from_x(self, ev) -> None:
         w = self.winfo_width()
@@ -584,7 +822,7 @@ class Slider(tk.Canvas):
         val = max(self.lo, min(self.hi, val))
         if val != self.var.get():
             self.var.set(val)
-            self._draw()
+            self._shown.go(self._frac())
             if self._on_change:
                 self._on_change()
 
@@ -593,62 +831,288 @@ class Slider(tk.Canvas):
         if w < 8 or h < 8:
             return
         self.delete("all")
-        x0, x1, cy = 10, w - 10, h / 2
-        frac = (self.var.get() - self.lo) / max(1, (self.hi - self.lo))
-        frac = min(1.0, max(0.0, frac))
+        x0, x1, cy = 10, w - 10, h / 2 - 4
+        frac = min(1.0, max(0.0, self._shown.value))
+        kx = x0 + (x1 - x0) * frac
         round_rect(self, x0, cy - 2, x1, cy + 2, 2, fill=BORDER, outline=BORDER)
         if frac > 0.002:
-            round_rect(self, x0, cy - 2, x0 + (x1 - x0) * frac, cy + 2, 2,
-                       fill=ACCENT, outline=ACCENT)
-        kx = x0 + (x1 - x0) * frac
-        self.create_oval(kx - 8, cy - 8, kx + 8, cy + 8, fill="#FFFFFF",
-                         outline=ACCENT, width=2)
+            round_rect(self, x0, cy - 2, kx, cy + 2, 2, fill=WHITE, outline=WHITE)
+        # marcas cada GB
+        gb_steps = max(1, (self.hi - self.lo) // 1024)
+        for i in range(gb_steps + 1):
+            tx = x0 + (x1 - x0) * (i / gb_steps)
+            self.create_line(tx, cy + 12, tx, cy + 16,
+                             fill=TEXT_DIM if tx <= kx + 0.5 else BORDER_HI)
+        r = 7 + 3 * self._grow.value
+        self.create_oval(kx - r, cy - r, kx + r, cy + r, fill=WHITE, outline="")
+        self.create_oval(kx - 2.5, cy - 2.5, kx + 2.5, cy + 2.5, fill=INK, outline="")
 
 
 class Toggle(tk.Canvas):
-    """Interruptor on/off."""
+    """Interruptor: la bolita se desliza y la pista se rellena de blanco."""
 
-    def __init__(self, master, variable: tk.BooleanVar, on_change=None) -> None:
-        super().__init__(master, width=42, height=24, bg=BG,
+    def __init__(self, master, variable: tk.BooleanVar, on_change=None,
+                 bg: str = SURFACE) -> None:
+        super().__init__(master, width=44, height=24, bg=bg,
                          highlightthickness=0, bd=0, cursor="hand2")
         self.var = variable
         self._on_change = on_change
+        self._p = Tween(self, self._draw, value=1.0 if variable.get() else 0.0, rate=0.3)
         self.bind("<Button-1>", self._click)
         self._draw()
 
     def _click(self, _ev=None) -> None:
         self.var.set(not self.var.get())
-        self._draw()
+        self._p.go(1.0 if self.var.get() else 0.0)
         if self._on_change:
             self._on_change()
 
     def _draw(self) -> None:
-        w, h = 42, 24
+        w, h = 44, 24
         self.delete("all")
-        on = bool(self.var.get())
+        p = self._p.value
         round_rect(self, 1, 1, w - 1, h - 1, (h - 2) / 2,
-                   fill=ACCENT if on else CARD,
-                   outline=ACCENT if on else BORDER)
-        cx = w - 12 if on else 12
+                   fill=lerp_color(FIELD, WHITE, p),
+                   outline=lerp_color(BORDER_HI, WHITE, p))
+        cx = 13 + (w - 26) * p
         self.create_oval(cx - 8, 4, cx + 8, h - 4,
-                         fill="#FFFFFF" if on else MUTED, outline="")
+                         fill=lerp_color(MUTED, INK, p), outline="")
+
+
+class PathField(tk.Canvas):
+    """Ruta de solo lectura: se acorta por el medio con puntos suspensivos."""
+
+    def __init__(self, master, variable: tk.StringVar, height: int = 38,
+                 bg: str = SURFACE) -> None:
+        super().__init__(master, width=10, height=height, bg=bg,
+                         highlightthickness=0, bd=0)
+        self._var = variable
+        self._measure = None
+        self.bind("<Configure>", lambda _e: self._draw())
+        variable.trace_add("write", lambda *_a: self._draw())
+
+    def _fit(self, text: str, maxw: float) -> str:
+        if self._measure is None:
+            self._measure = tkfont.Font(font=F_MONO).measure
+        if self._measure(text) <= maxw:
+            return text
+        ell = "…"
+        for k in range(len(text) - 1, 1, -1):
+            head, tail = (k + 1) // 2, k // 2
+            cand = text[:head] + ell + text[len(text) - tail:]
+            if self._measure(cand) <= maxw:
+                return cand
+        return ell
+
+    def _draw(self) -> None:
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 8 or h < 8:
+            return
+        self.delete("all")
+        round_rect(self, 0.5, 0.5, w - 1, h - 1, 9, fill=FIELD, outline=BORDER)
+        value = self._var.get().strip()
+        text = value or "No se encontro Java: usa Examinar"
+        self.create_text(13, h / 2, anchor="w", text=self._fit(text, w - 26),
+                         fill=TEXT_DIM if value else AMBER, font=F_MONO)
+
+
+class RoundCard(tk.Canvas):
+    """Tarjeta redondeada que se ajusta sola a la altura de su contenido (`.body`)."""
+
+    def __init__(self, master, pad: int = 16, bg: str = BG) -> None:
+        super().__init__(master, width=10, height=40, bg=bg, highlightthickness=0, bd=0)
+        self._pad = pad
+        self.locked = False          # True mientras una animacion controla la altura
+        self.body = tk.Frame(self, bg=SURFACE)
+        self._win = self.create_window(pad, pad, anchor="nw", window=self.body)
+        self.bind("<Configure>", self._on_conf)
+        self.body.bind("<Configure>", lambda _e: self.fit())
+
+    def fit(self) -> None:
+        if self.locked:
+            return
+        h = self.body.winfo_reqheight() + 2 * self._pad
+        if int(float(self.cget("height"))) != h:
+            self.configure(height=h)
+
+    def _on_conf(self, ev) -> None:
+        w, h = ev.width, ev.height
+        if w < 8 or h < 8:
+            return
+        self.delete("bg")
+        round_rect(self, 0.5, 0.5, w - 1, h - 1, 12, fill=SURFACE, outline=BORDER, tags="bg")
+        self.tag_lower("bg")
+        self.itemconfigure(self._win, width=max(20, w - 2 * self._pad))
+
+
+class Sky(tk.Canvas):
+    """Cabecera: luna creciente, estrellas que titilan y una estrella fugaz de vez en cuando."""
+
+    def __init__(self, master, version: str) -> None:
+        super().__init__(master, width=10, height=SKY_H, bg=BG, highlightthickness=0, bd=0)
+        self._version = version
+        self._sky_w = 0
+        self._stars: list[tuple[int, float, float, str]] = []
+        self._t = 0
+        self._cool = 90
+        self._sn = -1
+        self._sitems: list[int] = []
+        self._rnd = random.Random(11)
+        self._job = None
+        self.bind("<Configure>", lambda e: self._build(e.width))
+
+    def _build(self, w: int) -> None:
+        if w < 120 or w == self._sky_w:
+            return
+        self._sky_w = w
+        self.delete("all")
+        self._stars = []
+        self._sitems = []
+        self._sn = -1
+        rnd = random.Random(11)
+        placed = tries = 0
+        while placed < 22 and tries < 800:
+            tries += 1
+            x = rnd.uniform(5, w - 5)
+            y = rnd.uniform(5, SKY_H - 5)
+            if x < 400 and 4 < y < SKY_H - 4:          # zona de marca y titulo
+                continue
+            if x > w - 84 and y < 46:                  # zona de la version
+                continue
+            s = rnd.choice((1, 1, 1, 1.5, 1.5, 2))
+            hi = lerp_color("#555555", "#D0D0D0", rnd.random())
+            item = self.create_oval(x - s, y - s, x + s, y + s, fill=BG, outline="")
+            self._stars.append((item, rnd.uniform(0, 6.28), rnd.uniform(0.05, 0.16), hi))
+            placed += 1
+
+        # luna creciente = circulo blanco recortado por otro del color del fondo
+        self.create_oval(14, 12, 58, 56, fill=WHITE, outline="")
+        self.create_oval(27, 6, 67, 46, fill=BG, outline="")
+        self.create_text(84, 24, anchor="w", text="Lunar Offline", fill=WHITE, font=F_TITLE)
+        self.create_text(84, 50, anchor="w", fill=MUTED, font=F_SUB,
+                         text="Lunar Client completo con un nick no premium.")
+        round_rect(self, w - 66, 10, w - 1, 34, 12, fill=BG, outline=BORDER_HI)
+        self.create_text(w - 33.5, 22, text=self._version, fill=TEXT_DIM, font=F_SMALL)
+
+    def start(self) -> None:
+        if self._job is None:
+            self._tick()
+
+    def _tick(self) -> None:
+        self._job = None
+        try:
+            self._t += 1
+            for item, phase, speed, hi in self._stars:
+                v = (math.sin(self._t * speed + phase) + 1) / 2
+                self.itemconfigure(item, fill=lerp_color("#161616", hi, v))
+            self._shoot_step()
+            self._job = self.after(45, self._tick)
+        except tk.TclError:
+            self._job = None
+
+    def _shoot_step(self) -> None:
+        if self._sn < 0:
+            self._cool -= 1
+            if self._cool > 0 or self._sky_w < 200:
+                return
+            self._sn = 0                                  # nace una estrella fugaz
+            self._sitems = [
+                self.create_line(0, 0, 0, 0, fill=BG, width=2 if i == 0 else 1,
+                                 capstyle="round") for i in range(5)]
+        n, dx, dy = self._sn, 4.2, 2.4
+        hx, hy = self._sky_w - 130 + n * dx, 20 + n * dy
+        life = 1.0 if n < 14 else max(0.0, (22 - n) / 8)
+        for i, item in enumerate(self._sitems):
+            self.coords(item, hx - i * dx * 1.2, hy - i * dy * 1.2,
+                        hx - (i + 1) * dx * 1.2, hy - (i + 1) * dy * 1.2)
+            self.itemconfigure(item, fill=lerp_color(BG, WHITE, (1 - i / 5) * life))
+        self._sn += 1
+        if self._sn > 22:
+            for item in self._sitems:
+                self.delete(item)
+            self._sitems = []
+            self._sn = -1
+            self._cool = self._rnd.randint(130, 260)      # 6-12 s hasta la siguiente
+
+
+class Tooltip:
+    """Globo de ayuda breve al pasar el raton. `text` puede ser un str o una funcion."""
+
+    def __init__(self, widget, text, delay: int = 550) -> None:
+        self.widget, self.text, self.delay = widget, text, delay
+        self._tip: tk.Toplevel | None = None
+        self._job = None
+        targets = [widget]
+        inner = getattr(widget, "entry", None)
+        if inner is not None:
+            targets.append(inner)
+        for t in targets:
+            t.bind("<Enter>", self._schedule, add="+")
+            t.bind("<Leave>", self._hide, add="+")
+            t.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _e=None) -> None:
+        self._cancel()
+        self._job = self.widget.after(self.delay, self._show)
+
+    def _cancel(self) -> None:
+        if self._job is not None:
+            try:
+                self.widget.after_cancel(self._job)
+            except Exception:
+                pass
+            self._job = None
+
+    def _show(self) -> None:
+        self._job = None
+        if self._tip is not None:
+            return
+        text = self.text() if callable(self.text) else self.text
+        if not text:
+            return
+        x, y = self.widget.winfo_pointerxy()
+        tip = tk.Toplevel(self.widget)
+        tip.withdraw()
+        tip.overrideredirect(True)
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        tk.Label(tip, text=text, fg=WHITE, bg=FIELD_HI, font=F_SMALL, justify="left",
+                 wraplength=280, padx=10, pady=6, bd=0,
+                 highlightthickness=1, highlightbackground=BORDER_HI).pack()
+        tip.geometry(f"+{x + 14}+{y + 18}")
+        tip.deiconify()
+        self._tip = tip
+
+    def _hide(self, _e=None) -> None:
+        self._cancel()
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except Exception:
+                pass
+            self._tip = None
 
 
 class Link(tk.Label):
-    """Texto clicable discreto."""
+    """Texto clicable que se ilumina con una transicion suave."""
 
-    def __init__(self, master, text: str, command, color: str = MUTED) -> None:
-        super().__init__(master, text=text, fg=color, bg=BG, font=F_SMALL,
-                         cursor="hand2")
+    def __init__(self, master, text: str, command, color: str = MUTED,
+                 bg: str = BG) -> None:
+        super().__init__(master, text=text, fg=color, bg=bg, font=F_LINK,
+                         cursor="hand2", padx=9, pady=4)
         self._base = color
+        self._tw = Tween(self, lambda: self.configure(fg=lerp_color(self._base, WHITE, self._tw.value)),
+                         rate=0.3)
         self.bind("<Button-1>", lambda _e: command())
-        self.bind("<Enter>", lambda _e: self.configure(fg=TEXT))
-        self.bind("<Leave>", lambda _e: self.configure(fg=self._base))
+        self.bind("<Enter>", lambda _e: self._tw.go(1.0))
+        self.bind("<Leave>", lambda _e: self._tw.go(0.0))
 
 
-def caps(master, text: str) -> tk.Label:
-    """Etiqueta de campo en mayusculas pequenas con tracking manual."""
-    return tk.Label(master, text=text.upper(), fg=MUTED, bg=BG,
+def caps(master, text: str, bg: str = SURFACE) -> tk.Label:
+    """Etiqueta de campo en mayusculas pequenas."""
+    return tk.Label(master, text=text.upper(), fg=MUTED, bg=bg,
                     font=F_CAPS, anchor="w")
 
 
@@ -668,24 +1132,24 @@ class Dialog(tk.Toplevel):
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True, padx=24, pady=22)
 
-        tone = {"error": "#FF6B6B", "warn": AMBER, "ok": GREEN}.get(kind, ACCENT)
+        tone = {"error": RED, "warn": AMBER}.get(kind, WHITE)
         line = tk.Frame(body, bg=tone, width=3)
         line.pack(side="left", fill="y", padx=(0, 14))
-        tk.Label(body, text=message, fg="#C2C5D2", bg=BG, font=F_INPUT,
+        tk.Label(body, text=message, fg=TEXT_DIM, bg=BG, font=F_INPUT,
                  justify="left", anchor="w", wraplength=390).pack(
                      side="left", fill="both", expand=True)
 
         row = tk.Frame(self, bg=BG)
         row.pack(fill="x", padx=24, pady=(0, 22))
+        small = ("Segoe UI Semibold", -12)
         if ask:
-            RoundButton(row, "Cancelar", self._no, height=40, width=118, fill=CARD,
-                        hover=CARD_HI, fg=TEXT,
-                        font=("Segoe UI Semibold", -12)).pack(side="right", padx=(8, 0))
+            RoundButton(row, "Cancelar", self._no, height=40, width=118, radius=10,
+                        style="ghost", font=small).pack(side="right", padx=(8, 0))
             RoundButton(row, "Continuar", self._yes, height=40, width=118, radius=10,
-                        font=("Segoe UI Semibold", -12)).pack(side="right")
+                        font=small).pack(side="right")
         else:
             RoundButton(row, "Entendido", self._yes, height=40, width=132,
-                        radius=10, font=("Segoe UI Semibold", -12)).pack(side="right")
+                        radius=10, font=small).pack(side="right")
 
         self.update_idletasks()
         w = max(360, self.winfo_reqwidth())
@@ -711,8 +1175,6 @@ class Dialog(tk.Toplevel):
         self.destroy()
 
 
-
-
 def dark_titlebar(win: tk.Misc) -> None:
     """Pinta la barra de titulo nativa en modo oscuro. Silencioso si falla."""
     if os.name != "nt":
@@ -733,7 +1195,7 @@ class Launcher(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Lunar Offline Launcher")
-        self.geometry("580x572")
+        self.geometry(f"{WIN_W}x720")
         self.resizable(False, False)
         self.configure(bg=BG)
         try:
@@ -747,8 +1209,11 @@ class Launcher(tk.Tk):
         self.pending_restore = False
         self.launcher_warned = False
         self._advanced_open = False
-        self._base_h = 572
-        self._full_h = 704
+        self._cards: list[RoundCard] = []
+        self._pulsing = False
+        self._pulse_t = 0.0
+        self._pulse_job = None
+        self._adv_dims: dict[bool, tuple[int, int]] = {}
 
         # recuperacion de un cierre sucio
         if SWAP_MARKER.exists() or ORIGINAL_ACCOUNTS.is_file():
@@ -784,142 +1249,155 @@ class Launcher(tk.Tk):
 
     # ---------------- layout ----------------
 
+    def _card(self, top: int) -> RoundCard:
+        card = RoundCard(self)
+        card.pack(fill="x", padx=26, pady=(top, 0))
+        self._cards.append(card)
+        return card
+
     def _build(self) -> None:
-        # ---- cabecera
-        head = tk.Frame(self, bg=BG)
-        head.pack(fill="x", padx=26, pady=(24, 0))
+        pad = 26
 
-        brand = tk.Frame(head, bg=BG)
-        brand.pack(side="left", anchor="w")
-        mark = tk.Canvas(brand, width=10, height=10, bg=BG, highlightthickness=0)
-        mark.pack(side="left", padx=(0, 9), pady=(8, 0))
-        mark.create_oval(0, 0, 10, 10, fill=ACCENT, outline="")
-        tk.Label(brand, text="Lunar Offline", fg=TEXT, bg=BG,
-                 font=F_TITLE).pack(side="left")
+        # ---- cabecera animada
+        self.sky = Sky(self, f"v{APP_VERSION}")
+        self.sky.pack(fill="x", padx=pad, pady=(18, 0))
 
-        tk.Label(head, text=f"v{APP_VERSION}", fg=MUTED, bg=BG,
-                 font=F_SMALL).pack(side="right", pady=(12, 0))
-        tk.Label(self, text="Lunar Client completo con un nick no premium.",
-                 fg=MUTED, bg=BG, font=F_SUB, anchor="w") \
-            .pack(fill="x", padx=26, pady=(4, 0))
-
-        # ---- cuerpo
-        body = tk.Frame(self, bg=BG)
-        body.pack(fill="x", padx=26, pady=(22, 0))
-
-        caps(body, "Nick").pack(fill="x")
+        # ---- tarjeta: cuenta
+        b = self._card(14).body
+        caps(b, "Nick").pack(fill="x")
         self.nick_var = tk.StringVar(value=self.cfg.get("nick") or "Player")
-        self.nick_entry = RoundEntry(body, self.nick_var, height=46)
-        self.nick_entry.pack(fill="x", pady=(6, 0))
+        self.nick_entry = RoundEntry(b, self.nick_var, height=46, counter=16)
+        self.nick_entry.pack(fill="x", pady=(8, 0))
+        self.nick_hint = tk.Label(b, text="", fg=FAINT, bg=SURFACE, font=F_SMALL,
+                                  anchor="w")
+        self.nick_hint.pack(fill="x", pady=(6, 0))
+        self.nick_var.trace_add("write", lambda *_a: self._check_nick())
+        self._check_nick()
+        Tooltip(self.nick_entry,
+                "1 a 16 caracteres: A-Z, 0-9 o _.\n"
+                "Mismo nick = mismo UUID = mismo inventario en servidores offline.")
 
-        # fila version / ram
-        row = tk.Frame(body, bg=BG)
-        row.pack(fill="x", pady=(16, 0))
-        row.columnconfigure(0, weight=0, minsize=190)
-        row.columnconfigure(1, weight=1)
+        # ---- tarjeta: juego (version, memoria, servidor)
+        b = self._card(12).body
+        row = tk.Frame(b, bg=SURFACE)
+        row.pack(fill="x")
+        row.columnconfigure(0, weight=1, uniform="cols")
+        row.columnconfigure(1, weight=1, uniform="cols")
 
-        left = tk.Frame(row, bg=BG)
-        left.grid(row=0, column=0, sticky="new", padx=(0, 16))
-        caps(left, "Version").pack(fill="x")
+        left = tk.Frame(row, bg=SURFACE)
+        left.grid(row=0, column=0, sticky="new", padx=(0, 12))
+        caps(left, "Versión").pack(fill="x")
         self.version_var = tk.StringVar(value=self.cfg.get("version", "1.8.9"))
         vers = available_versions() or ["1.8.9"]
         if self.version_var.get() not in vers:
             self.version_var.set(vers[0])
-        Segmented(left, vers, self.version_var).pack(fill="x", pady=(6, 0))
+        Segmented(left, vers, self.version_var).pack(fill="x", pady=(8, 0))
 
-        right = tk.Frame(row, bg=BG)
-        right.grid(row=0, column=1, sticky="new")
-        cap_row = tk.Frame(right, bg=BG)
+        right = tk.Frame(row, bg=SURFACE)
+        right.grid(row=0, column=1, sticky="new", padx=(12, 0))
+        cap_row = tk.Frame(right, bg=SURFACE)
         cap_row.pack(fill="x")
         caps(cap_row, "Memoria").pack(side="left")
-        self.ram_lbl = tk.Label(cap_row, text="", fg=TEXT, bg=BG,
-                                font=("Segoe UI Semibold", -9))
+        self.ram_lbl = tk.Label(cap_row, text="", fg=TEXT, bg=SURFACE,
+                                font=("Segoe UI Semibold", -11))
         self.ram_lbl.pack(side="right")
         self.ram_var = tk.IntVar(value=int(self.cfg.get("ram", 3072)))
-        Slider(right, self.ram_var, 1024, 8192, step=256,
-               on_change=self._ram_label).pack(fill="x", pady=(6, 0))
+        self.ram_slider = Slider(right, self.ram_var, 1024, 8192, step=256,
+                                 on_change=self._ram_label)
+        self.ram_slider.pack(fill="x", pady=(8, 0))
         self._ram_label()
+        Tooltip(self.ram_slider,
+                "RAM asignada al juego (-Xms/-Xmx).\n3072 MB va bien para 1.8.9.")
 
-        # servidor
-        caps(body, "Servidor").pack(fill="x", pady=(16, 0))
+        caps(b, "Servidor").pack(fill="x", pady=(16, 0))
         self.server_var = tk.StringVar(value=self.cfg.get("server", ""))
-        self.server_entry = RoundEntry(body, self.server_var, height=42)
-        self.server_entry.pack(fill="x", pady=(6, 0))
-        tk.Label(body, text="host o host:puerto — vacio entra al menu principal",
-                 fg=MUTED, bg=BG, font=F_SMALL, anchor="w").pack(fill="x", pady=(5, 0))
+        self.server_entry = RoundEntry(b, self.server_var, height=44)
+        self.server_entry.pack(fill="x", pady=(8, 0))
+        tk.Label(b, text="host o host:puerto — vacío entra al menú principal",
+                 fg=FAINT, bg=SURFACE, font=F_SMALL, anchor="w").pack(fill="x", pady=(6, 0))
+        Tooltip(self.server_entry,
+                "Ej.: mc.miservidor.net o mc.miservidor.net:25566\n"
+                "El servidor debe tener online-mode=false.")
 
-        # avanzado
-        adv_head = tk.Frame(body, bg=BG)
-        adv_head.pack(fill="x", pady=(14, 0))
-        self.adv_link = Link(adv_head, "Avanzado", self._toggle_advanced,
-                             color="#8E94A6")
-        self.adv_link.pack(side="left")
+        # ---- tarjeta: avanzado (se despliega con animacion)
+        self.adv_card = self._card(12)
+        b = self.adv_card.body
+        self.adv_head = tk.Canvas(b, width=10, height=26, bg=SURFACE,
+                                  highlightthickness=0, bd=0, cursor="hand2")
+        self.adv_head.pack(fill="x")
 
-        self.adv = tk.Frame(body, bg=BG)
-        self.adv.columnconfigure(3, weight=1)
+        self.adv = tk.Frame(b, bg=SURFACE)
+        self.adv.columnconfigure(1, weight=1)
 
-        caps(self.adv, "Resolucion").grid(row=0, column=0, sticky="w", pady=(10, 0))
-        res = tk.Frame(self.adv, bg=BG)
-        res.grid(row=0, column=1, columnspan=3, sticky="w", pady=(10, 0), padx=(14, 0))
+        caps(self.adv, "Resolución").grid(row=0, column=0, sticky="w", pady=(14, 0))
+        res = tk.Frame(self.adv, bg=SURFACE)
+        res.grid(row=0, column=1, sticky="w", pady=(14, 0), padx=(16, 0))
         self.w_var = tk.StringVar(value=str(self.cfg.get("width", 1280)))
         self.h_var = tk.StringVar(value=str(self.cfg.get("height", 720)))
-        w_entry = tk.Entry(res, textvariable=self.w_var, width=6, bd=0, relief="flat",
-                           bg=CARD, fg=TEXT, insertbackground=ACCENT, font=F_INPUT,
-                           highlightthickness=1, highlightbackground=BORDER,
-                           highlightcolor=ACCENT, justify="center")
-        w_entry.pack(side="left", ipady=5)
-        tk.Label(res, text="x", fg=MUTED, bg=BG, font=F_INPUT).pack(side="left", padx=7)
-        h_entry = tk.Entry(res, textvariable=self.h_var, width=6, bd=0, relief="flat",
-                           bg=CARD, fg=TEXT, insertbackground=ACCENT, font=F_INPUT,
-                           highlightthickness=1, highlightbackground=BORDER,
-                           highlightcolor=ACCENT, justify="center")
-        h_entry.pack(side="left", ipady=5)
+        for i, var in enumerate((self.w_var, self.h_var)):
+            if i == 1:
+                tk.Label(res, text="×", fg=FAINT, bg=SURFACE,
+                         font=F_INPUT).pack(side="left", padx=9)
+            tk.Entry(res, textvariable=var, width=6, bd=0, relief="flat",
+                     bg=FIELD, fg=TEXT, insertbackground=WHITE, font=F_INPUT,
+                     selectbackground=WHITE, selectforeground=INK,
+                     highlightthickness=1, highlightbackground=BORDER,
+                     highlightcolor=WHITE, justify="center").pack(side="left", ipady=6)
 
         self.fs_var = tk.BooleanVar(value=bool(self.cfg.get("fullscreen", False)))
-        fs_box = tk.Frame(self.adv, bg=BG)
-        fs_box.grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        fs_box = tk.Frame(self.adv, bg=SURFACE)
+        fs_box.grid(row=1, column=0, columnspan=2, sticky="w", pady=(14, 0))
         Toggle(fs_box, self.fs_var).pack(side="left")
-        tk.Label(fs_box, text="Pantalla completa", fg="#B9BCC9", bg=BG,
-                 font=F_SUB).pack(side="left", padx=(9, 0))
+        tk.Label(fs_box, text="Pantalla completa", fg=TEXT_DIM, bg=SURFACE,
+                 font=F_INPUT).pack(side="left", padx=(10, 0))
 
-        caps(self.adv, "Java").grid(row=2, column=0, sticky="w", pady=(12, 0))
-        jf = tk.Frame(self.adv, bg=BG)
-        jf.grid(row=2, column=1, columnspan=3, sticky="ew", padx=(14, 0), pady=(12, 0))
+        caps(self.adv, "Java").grid(row=2, column=0, sticky="w", pady=(14, 0))
+        jf = tk.Frame(self.adv, bg=SURFACE)
+        jf.grid(row=2, column=1, sticky="ew", padx=(16, 0), pady=(14, 0))
         jf.columnconfigure(0, weight=1)
         self.java_var = tk.StringVar(value=self.cfg.get("java") or (find_java() or ""))
-        tk.Entry(jf, textvariable=self.java_var, bd=0, relief="flat", bg=CARD,
-                 fg=TEXT, insertbackground=ACCENT, font=("Consolas", -10),
-                 highlightthickness=1, highlightbackground=BORDER,
-                 highlightcolor=ACCENT).grid(row=0, column=0, sticky="ew", ipady=6)
-        Link(jf, "Examinar", self._pick_java, color="#8E94A6") \
-            .grid(row=0, column=1, padx=(10, 0))
+        self.java_field = PathField(jf, self.java_var)
+        self.java_field.grid(row=0, column=0, sticky="ew")
+        RoundButton(jf, "Examinar", self._pick_java, height=38, width=96, radius=9,
+                    bg=SURFACE, style="ghost",
+                    font=("Segoe UI Semibold", -12)).grid(row=0, column=1, padx=(10, 0))
+        Tooltip(self.java_field,
+                lambda: self.java_var.get() or "Usa Examinar para elegir javaw.exe")
 
-        # ---- pie fijo
+        # animacion del panel: 0 = plegado, 1 = desplegado
+        self._adv_tw = Tween(self, self._adv_frame, rate=0.22, done=self._adv_done)
+        self.adv_head.bind("<Configure>", lambda _e: self._draw_adv_head())
+        self.adv_head.bind("<Button-1>", lambda _e: self._toggle_advanced())
+
+        # ---- boton principal
         foot = tk.Frame(self, bg=BG)
-        foot.pack(fill="x", padx=26, pady=(26, 20))
-
-        self.launch_btn = RoundButton(foot, "Jugar con Lunar", self.launch, height=54)
+        foot.pack(fill="x", padx=pad, pady=(20, 0))
+        self.launch_btn = RoundButton(foot, "Jugar con Lunar", self.launch,
+                                      height=56, radius=14, icon="play")
         self.launch_btn.pack(fill="x")
 
-        bar = tk.Frame(foot, bg=BG)
-        bar.pack(fill="x", pady=(10, 0))
-        self.status = tk.Label(bar, text="Listo", fg=MUTED, bg=BG, font=F_SMALL,
+        # ---- pie: estado a la izquierda, acciones a la derecha
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x", pady=(18, 0))
+        bar = tk.Frame(self, bg=BG)
+        bar.pack(fill="x", padx=pad - 9, pady=(8, 10))
+        self.dot = tk.Canvas(bar, width=10, height=10, bg=BG, highlightthickness=0)
+        self.dot.pack(side="left", padx=(9, 8))
+        self._dot_item = self.dot.create_oval(1, 1, 9, 9, fill=WHITE, outline="")
+        self.status = tk.Label(bar, text="Listo", fg=TEXT_DIM, bg=BG, font=F_LINK,
                                anchor="w")
         self.status.pack(side="left")
         Link(bar, "Restaurar", self._restore).pack(side="right")
-        Link(bar, "Diagnostico", self._diagnose).pack(side="right", padx=(0, 14))
-        Link(bar, "Log", self._open_log).pack(side="right", padx=(0, 14))
+        Link(bar, "Diagnóstico", self._diagnose).pack(side="right")
+        Link(bar, "Log", self._open_log).pack(side="right")
 
-        # medir las dos alturas para que el panel avanzado no rompa el layout
-        self.adv.pack(fill="x")
-        self.update_idletasks()
-        self._full_h = self.winfo_reqheight()
-        self.adv.pack_forget()
-        self.update_idletasks()
-        self._base_h = self.winfo_reqheight()
-        self.geometry(f"580x{self._base_h}")
+        # ---- alturas con el panel avanzado abierto y cerrado
+        self._measure_adv()
         if self.cfg.get("advanced"):
-            self._toggle_advanced()
+            self._advanced_open = True
+            self.adv_card.locked = True
+            self.adv.pack(fill="x")
+            self._adv_tw.jump(1.0)
+            self.adv_card.locked = False
 
         self.update_idletasks()
         dark_titlebar(self)
@@ -927,25 +1405,109 @@ class Launcher(tk.Tk):
         self.nick_entry.focus()
         self.bind("<Return>", lambda _e: self.launch())
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.sky.start()
+        self._fade_in()
+
+    # ---------------- animaciones de la ventana ----------------
+
+    def _fade_in(self) -> None:
+        """Aparece con un fundido corto. Si el sistema no soporta alpha, no pasa nada."""
+        try:
+            self.attributes("-alpha", 0.0)
+        except tk.TclError:
+            return
+
+        def step(a: float = 0.0) -> None:
+            a = min(1.0, a + 0.09)
+            try:
+                self.attributes("-alpha", a)
+                if a < 1.0:
+                    self.after(16, lambda: step(a))
+            except tk.TclError:
+                pass
+        step()
+
+    def _apply_height(self) -> None:
+        """Ajusta tarjetas y ventana a la altura real del contenido."""
+        self.update_idletasks()
+        for card in self._cards:
+            card.fit()
+        self.update_idletasks()
+        self.geometry(f"{WIN_W}x{self.winfo_reqheight()}")
+
+    def _measure_adv(self) -> None:
+        """Mide (alto de tarjeta, alto de ventana) con Avanzado abierto y cerrado."""
+        for opened in (True, False):
+            if opened:
+                self.adv.pack(fill="x")
+            else:
+                self.adv.pack_forget()
+            self._apply_height()
+            self._adv_dims[opened] = (int(float(self.adv_card.cget("height"))),
+                                      self.winfo_reqheight())
+        self._draw_adv_head()
+
+    def _adv_frame(self) -> None:
+        v = self._adv_tw.value
+        (c0, r0), (c1, r1) = self._adv_dims[False], self._adv_dims[True]
+        self.adv_card.configure(height=int(round(c0 + (c1 - c0) * v)))
+        self.geometry(f"{WIN_W}x{int(round(r0 + (r1 - r0) * v))}")
+        self._draw_adv_head()
+
+    def _adv_done(self) -> None:
+        if not self._advanced_open:
+            self.adv.pack_forget()
+        self.adv_card.locked = False
+        self._apply_height()
+
+    def _draw_adv_head(self) -> None:
+        w, h = self.adv_head.winfo_width(), self.adv_head.winfo_height()
+        if w < 8 or h < 8:
+            return
+        c = self.adv_head
+        c.delete("all")
+        c.create_text(0, h / 2, anchor="w", text="Avanzado", fill=TEXT,
+                      font=("Segoe UI Semibold", -13))
+        v = self._adv_tw.value if hasattr(self, "_adv_tw") else 0.0
+        cx, cy = w - 8, h / 2
+        d = 3 - 6 * v                                  # la flecha gira al abrir
+        c.create_line(cx - 5, cy - d, cx, cy + d, cx + 5, cy - d, fill=MUTED, width=2,
+                      capstyle="round", joinstyle="round")
 
     def _toggle_advanced(self) -> None:
         self._advanced_open = not self._advanced_open
+        self.adv_card.locked = True
         if self._advanced_open:
             self.adv.pack(fill="x")
-            self.adv_link.configure(text="Ocultar avanzado")
-            self.geometry(f"580x{self._full_h}")
-        else:
-            self.adv.pack_forget()
-            self.adv_link.configure(text="Avanzado")
-            self.geometry(f"580x{self._base_h}")
+        self._adv_tw.go(1.0 if self._advanced_open else 0.0)
         self.cfg["advanced"] = self._advanced_open
         try:
             self._save_cfg()
         except Exception:
             pass
 
+    # ---------------- estado y validacion ----------------
+
+    def _check_nick(self) -> None:
+        """Validacion visual: borde rojo y mensaje corto si el nick no sirve."""
+        nick = self.nick_var.get()
+        if NICK_RE.match(nick):
+            self.nick_entry.set_error(False)
+            self.nick_hint.configure(text="Nick válido", fg=FAINT)
+            return
+        if not nick:
+            msg = "Escribe un nick (1 a 16 caracteres)."
+        elif len(nick) > 16:
+            msg = "Máximo 16 caracteres."
+        else:
+            msg = "Solo letras, números y _ (sin espacios)."
+        self.nick_entry.set_error(True)
+        self.nick_hint.configure(text=msg, fg=RED)
+
     def _ram_label(self, _v=None) -> None:
-        self.ram_lbl.configure(text=f"{int(self.ram_var.get())} MB")
+        mb = int(self.ram_var.get())
+        gb = f"{mb // 1024}" if mb % 1024 == 0 else f"{mb / 1024:.1f}"
+        self.ram_lbl.configure(text=f"{mb} MB · {gb} GB")
 
     def report_callback_exception(self, exc, val, tb) -> None:  # noqa: N802
         """Una excepcion en un callback de Tk no puede desaparecer en silencio."""
@@ -972,9 +1534,27 @@ class Launcher(tk.Tk):
 
     # ---------------- actions ----------------
 
-    def _set_status(self, text: str, color: str = MUTED) -> None:
-        self.status.configure(text=text, fg=color)
+    def _set_status(self, text: str, color: str = MUTED, pulse: bool = False) -> None:
+        """Punto + texto del pie. `pulse` hace latir el punto (juego corriendo)."""
+        self._pulsing = pulse
+        self.dot.itemconfigure(self._dot_item, fill=WHITE if color == MUTED else color)
+        self.status.configure(text=text, fg=TEXT_DIM if color == MUTED else color)
+        if pulse and self._pulse_job is None:
+            self._pulse_step()
         self.update_idletasks()
+
+    def _pulse_step(self) -> None:
+        self._pulse_job = None
+        if not self._pulsing:
+            self.dot.itemconfigure(self._dot_item, fill=WHITE)
+            return
+        self._pulse_t += 0.13
+        v = (math.sin(self._pulse_t) + 1) / 2
+        try:
+            self.dot.itemconfigure(self._dot_item, fill=lerp_color("#4A4A4A", WHITE, v))
+            self._pulse_job = self.after(40, self._pulse_step)
+        except tk.TclError:
+            self._pulse_job = None
 
     def _restore(self) -> None:
         if accounts_restore():
@@ -1027,8 +1607,9 @@ class Launcher(tk.Tk):
 
         nick = self.nick_var.get().strip()
         if not NICK_RE.match(nick):
-            self._info("Nick invalido",
-                       "Usa de 1 a 16 caracteres: A-Z, 0-9 o _.", kind="error")
+            # sin dialogo: el campo se sacude y el mensaje rojo ya dice que pasa
+            self.nick_entry.shake()
+            self.nick_entry.focus()
             return
 
         java = self.java_var.get().strip()
@@ -1091,8 +1672,8 @@ class Launcher(tk.Tk):
             self._info("No arranco", str(exc), kind="error")
             return
 
-        self.launch_btn.set_text("Lunar abierto")
-        self._set_status(f"Corriendo · PID {self.proc.pid}", GREEN)
+        self.launch_btn.set_state("Lunar abierto", disabled=True)
+        self._set_status(f"Corriendo · PID {self.proc.pid}", WHITE, pulse=True)
         self.after(4000, self._watch)
 
     def _watch(self) -> None:
@@ -1104,13 +1685,13 @@ class Launcher(tk.Tk):
                 self.launcher_warned = True
                 self._set_status("Cierra el launcher oficial", AMBER)
             elif not official_launcher_running():
-                self._set_status(f"Corriendo · PID {self.proc.pid}", GREEN)
+                self._set_status(f"Corriendo · PID {self.proc.pid}", WHITE, pulse=True)
             self.after(3000, self._watch)
         else:
             if self.pending_restore:
                 accounts_restore()
                 self.pending_restore = False
-            self.launch_btn.set_text("Jugar con Lunar")
+            self.launch_btn.set_state("Jugar con Lunar", disabled=False)
             self._set_status("Cuenta restaurada", MUTED)
 
     def _on_close(self) -> None:
@@ -1125,8 +1706,6 @@ class Launcher(tk.Tk):
         if self.pending_restore:
             accounts_restore()
         self.destroy()
-
-
 
 
 def selftest() -> int:

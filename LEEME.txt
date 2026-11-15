@@ -1,4 +1,4 @@
-LUNAR OFFLINE LAUNCHER — portable  v1.2.0
+LUNAR OFFLINE LAUNCHER — portable  v1.4.0
 ===========================================
 
 Un solo .exe. No necesita Python ni instalar nada.
@@ -63,6 +63,19 @@ NO FUNCIONA CON
 ---------------
 Cosmeticos y skin premium (van atados a la cuenta de Microsoft).
 Servidores premium.
+
+CAMBIOS 1.4.0
+-------------
+- Interfaz en blanco y negro con animaciones: cabecera con luna y estrellas,
+  boton blanco con destello, selector de version deslizante, panel Avanzado
+  que se despliega y campo de nick que se sacude si es invalido.
+- Sin cambios en el funcionamiento del juego ni en el cambio de cuenta.
+
+CAMBIOS 1.3.0
+-------------
+- Interfaz rediseñada: tarjetas, boton con degradado, validacion visual
+  del nick, memoria en MB y GB, ruta de Java acortada y pie con estado.
+- Sin cambios en el funcionamiento del juego ni en el cambio de cuenta.
 
 CAMBIOS 1.2.0
 -------------

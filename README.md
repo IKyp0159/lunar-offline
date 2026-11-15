@@ -272,6 +272,49 @@ Nada de esto se sube a ningún sitio.
 
 ## Cambios
 
+### 1.4.0
+
+- **Rediseño en blanco y negro**, como Lunar Client: negro puro, blanco y grises.
+  Solo el error (rojo) y el aviso (ámbar) salen de la escala.
+- **Cabecera animada**: luna creciente, estrellas que titilan y una estrella
+  fugaz cada 6-12 segundos.
+- **Botón *Jugar con Lunar* blanco** con un destello que lo cruza al pasar el
+  ratón. Mientras el juego corre pasa a un estado de carga: borde fino con un
+  trazo blanco recorriendo la base y un punto que late.
+- **Selector de versión** con una pastilla blanca que se desliza entre opciones.
+- **Slider de memoria** con marcas por GB; el relleno sigue a la bolita y esta
+  crece al pasar el ratón.
+- **Interruptor de pantalla completa** con la bolita deslizante y la pista que se
+  rellena de blanco.
+- **Panel Avanzado** que se despliega y se pliega animando la altura de la
+  ventana, con la flecha girando.
+- Los campos de texto iluminan el borde con una transición al enfocar. Con un nick
+  inválido, **el campo se sacude** en lugar de abrir un diálogo.
+- Enlaces del pie que se iluminan con transición, y punto de estado que **late**
+  mientras el juego corre.
+- La ventana aparece con un fundido corto.
+- Sin cambios en la lógica: swap de cuentas, comando de Genesis y `--selftest`
+  funcionan igual que antes.
+
+### 1.3.0
+
+- **Interfaz rediseñada**: contenido agrupado en tarjetas (cuenta, juego y
+  avanzado), paleta con tres niveles de superficie y un único acento azul/violeta,
+  y mejor contraste en etiquetas y textos de ayuda.
+- **Botón principal con degradado e icono de play**; deshabilitado mientras el
+  juego corre.
+- **Validación visual del nick**: borde rojo, contador `n/16` y mensaje corto
+  cuando está vacío, es demasiado largo o tiene caracteres no permitidos.
+- Memoria mostrada como `3072 MB · 3 GB`; riel del slider más fino.
+- **Ruta de Java acortada por el medio** (con tooltip de la ruta completa); se
+  cambia con *Examinar*.
+- Panel **Avanzado** con cabecera y flecha; la ventana se ajusta sola a su altura.
+- Pie con indicador de estado en color a la izquierda y Log / Diagnóstico /
+  Restaurar a la derecha, con hover.
+- Tooltips breves en nick, memoria, servidor y Java.
+- Sin cambios en la lógica: swap de cuentas, comando de Genesis y `--selftest`
+  funcionan igual que en 1.2.0.
+
 ### 1.2.0
 
 - **Interfaz nueva, minimalista.** Ya no usa los widgets grises del sistema:
