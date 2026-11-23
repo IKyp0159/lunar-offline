@@ -1,0 +1,10 @@
+# Un solo `.exe`, sin DLLs propias: la CRT de Visual C++ se enlaza estáticamente.
+#
+# El UCRT sigue siendo dinámico (viene con Windows 10/11), así que el binario
+# no necesita `vcruntime140.dll` al lado. La configuración vale solo para MSVC
+# en Windows; Linux y macOS no la ven.
+#
+# `/Brepro` quita la marca de tiempo del encabezado PE y la firma del PDB del
+# enlace: dos compilaciones del mismo código dan el mismo sha256.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/Brepro"]

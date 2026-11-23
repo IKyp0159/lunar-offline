@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      # `generate_context!` lee `app/dist` al compilar y el directorio no está
+      # en el repositorio.
+      - name: Frontend
+        working-directory: app
+        run: |
+          npm ci --no-fund --no-audit
+          npm run check
+          npm run build
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: release (.exe portable)
+    # Solo en etiquetas `v*` o a mano: el `.exe` se publica, no en cada PR.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Frontend
+        working-directory: app
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+      - name: Compilar el .exe (release, +crt-static)
+        run: cargo build --release --locked -p lunar-offline-app --features custom-protocol
+      - name: Copiar, sha256 y tamaño
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $destino = "dist/Lunar Offline.exe"
+          Copy-Item target/release/lunar-offline.exe $destino -Force
+          $hash = (Get-FileHash $destino -Algorithm SHA256).Hash.ToLower()
+          "$hash  Lunar Offline.exe" | Set-Content -Path "$destino.sha256" -Encoding ascii
+          $bytes = (Get-Item $destino).Length
+          $mb = [math]::Round($bytes / 1MB, 2)
+          "tamaño: $mb MB ($bytes bytes)"
+          if ($bytes -gt 15MB) { throw "el .exe supera los 15 MB ($mb MB)" }
+      - name: Comprobar la CLI embebida
+        shell: pwsh
+        run: |
+          $salida = "$env:TEMP\lunar-version.txt"
+          $proceso = Start-Process -FilePath "dist\Lunar Offline.exe" -ArgumentList "--version" `
+            -NoNewWindow -Wait -PassThru -RedirectStandardOutput $salida
+          $texto = Get-Content $salida -Raw
+          "salida: $texto"
+          if ($proceso.ExitCode -ne 0) { throw "la CLI embebida falló con $($proceso.ExitCode)" }
+          if ($texto -notmatch "lunar-offline") { throw "salida inesperada: $texto" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lunar-offline-windows-x64
+          path: |
+            dist/Lunar Offline.exe
+            dist/Lunar Offline.exe.sha256
+      - name: Publicar en la release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Lunar Offline.exe
+            dist/Lunar Offline.exe.sha256

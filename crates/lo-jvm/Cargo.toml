@@ -1,0 +1,17 @@
+[package]
+name = "lo-jvm"
+description = "Presets de JVM, validador de flags y prueba real con java -version"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+lo-config.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "lo-cli"
+description = "CLI lunar-offline-cli: --selftest, launch headless, restore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "lunar-offline-cli"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+lo-accounts.workspace = true
+lo-core.workspace = true
+lo-diag.workspace = true
+lo-launch.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

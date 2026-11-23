@@ -1,0 +1,93 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/lo-paths",
+  "crates/lo-config",
+  "crates/lo-servers",
+  "crates/lo-jvm",
+  "crates/lo-detect",
+  "crates/lo-accounts",
+  "crates/lo-launch",
+  "crates/lo-diag",
+  "crates/lo-core",
+  "crates/lo-cli",
+  "app",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["Lunar Offline Launcher contributors"]
+publish = false
+
+[workspace.dependencies]
+# Crates internos. Llevan `version` además de `path` porque cargo-deny trata
+# una dependencia solo-path como comodín y `[bans] wildcards = "deny"` la
+# rechaza.
+lo-paths = { version = "2.0.0", path = "crates/lo-paths" }
+lo-config = { version = "2.0.0", path = "crates/lo-config" }
+lo-servers = { version = "2.0.0", path = "crates/lo-servers" }
+lo-detect = { version = "2.0.0", path = "crates/lo-detect" }
+lo-accounts = { version = "2.0.0", path = "crates/lo-accounts" }
+lo-jvm = { version = "2.0.0", path = "crates/lo-jvm" }
+lo-launch = { version = "2.0.0", path = "crates/lo-launch" }
+lo-diag = { version = "2.0.0", path = "crates/lo-diag" }
+lo-core = { version = "2.0.0", path = "crates/lo-core" }
+lo-cli = { version = "2.0.0", path = "crates/lo-cli" }
+
+# Consola y WebView2 en Windows.
+windows-sys = "0.61"
+
+# Errores.
+thiserror = "2"
+
+# Datos.
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+uuid = { version = "1", features = ["v3", "serde"] }
+
+# NBT de servers.dat.
+fastnbt = "2"
+flate2 = "1"
+
+# Identidad offline y proceso del launcher oficial.
+md-5 = "0.10"
+sha1 = "0.10"
+sysinfo = "0.33"
+
+# Proceso del juego y fachada asíncrona.
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "process",
+  "sync",
+  "time",
+  "fs",
+  "io-util",
+  "macros",
+] }
+
+# CLI.
+clap = { version = "4", features = ["derive"] }
+
+[workspace.lints.rust]
+# El único `unsafe` vive en `app/src/plataforma.rs`, con su `allow` local.
+unsafe_code = "deny"
+unused_must_use = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

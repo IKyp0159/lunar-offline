@@ -1,0 +1,50 @@
+[package]
+name = "lunar-offline-app"
+description = "Aplicación de escritorio (Tauri 2 + Svelte 5) del launcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "lunar-offline"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+lo-accounts.workspace = true
+lo-cli.workspace = true
+lo-config.workspace = true
+lo-core.workspace = true
+lo-detect.workspace = true
+lo-diag.workspace = true
+lo-jvm.workspace = true
+lo-launch.workspace = true
+lo-servers.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+tokio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
+  "Win32_System_Registry",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# Tauri decide `is_dev()` como `!cfg!(feature = "custom-protocol")`. Sin esta
+# feature, un build en release sigue cargando `devUrl` (localhost:1420) y la
+# ventana sale con ERR_CONNECTION_REFUSED. La activa `scripts/empaquetar.ps1`.
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+
+[lints]
+workspace = true

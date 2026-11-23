@@ -1,0 +1,21 @@
+[package]
+name = "lo-diag"
+description = "Diagnóstico estructurado y informe de --selftest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+lo-accounts.workspace = true
+lo-detect.workspace = true
+lo-launch.workspace = true
+lo-paths.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

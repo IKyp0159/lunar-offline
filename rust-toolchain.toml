@@ -1,0 +1,6 @@
+[toolchain]
+# Versión fijada, no `stable`: `cargo --locked` fija las dependencias y esto
+# fija el compilador, para que el build sea reproducible.
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

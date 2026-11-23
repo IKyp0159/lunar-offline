@@ -1,0 +1,60 @@
+/* Tokens de la identidad monócroma. Solo blanco y negro; el rojo y el ámbar
+   quedan reservados a error y aviso, nunca como decoración. */
+
+:root {
+  --fondo-0: #000;
+  --fondo-1: #0b0b0b;
+  --fondo-2: #141414;
+  --fondo-3: #1d1d1d;
+  --borde: #262626;
+  --borde-fuerte: #3a3a3a;
+  --texto: #fff;
+  --texto-medio: #a3a3a3;
+  --texto-tenue: #6b6b6b;
+  --error: #e5484d;
+  --aviso: #f5a524;
+
+  --esp-1: 8px;
+  --esp-2: 16px;
+  --esp-3: 24px;
+  --esp-4: 32px;
+  --radio: 8px;
+  --radio-chico: 4px;
+
+  --transicion: 160ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  --transicion-lenta: 240ms cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  --barra-lateral: 208px;
+  --barra-estado: 32px;
+
+  color-scheme: dark;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+}
+
+/* Ventana oculta: se paran las animaciones para no gastar CPU detrás. */
+html.oculto *,
+html.oculto *::before,
+html.oculto *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transicion: 0ms;
+    --transicion-lenta: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
